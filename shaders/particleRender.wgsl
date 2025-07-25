@@ -13,7 +13,8 @@
 //!insert RenderEnums
 
 @group(0) @binding(0) var<uniform> g_constants : RenderConstants;
-@group(0) @binding(1) var<storage> g_particles : array<Particle>;
+@group(0) @binding(1) var<storage> g_particlesWrite : array<ParticleWrite>;
+@group(0) @binding(2) var<storage> g_particlesReadonly : array<ParticleReadonly>;
 
 
 struct VertexOutput {
@@ -39,7 +40,8 @@ const s_antialiasingWidth = 500.0;
 fn vertexMain(@builtin(vertex_index) vertexId: u32, @builtin(instance_index) instanceId : u32) -> VertexOutput {
     let onePixel = 1.0 / f32(g_constants.canvasSize.x);
 
-    let particle = g_particles[instanceId];
+    let particle = g_particlesWrite[instanceId];
+    let particleReadonly = g_particlesReadonly[instanceId];
 
     if(particle.enabled == 0)
     {
@@ -54,14 +56,14 @@ fn vertexMain(@builtin(vertex_index) vertexId: u32, @builtin(instance_index) ins
 
     var particlePosition : vec2f = particle.position;
 
-    var particleMaterialRadius = g_constants.particleRadiusTimestamp.x * sqrt(particle.volume);
+    var particleMaterialRadius = g_constants.particleRadiusTimestamp.x * sqrt(particleReadonly.volume);
 
     var quadVertexPosition = s_quadVertices[vertexId] * (1+s_antialiasingWidth*onePixel)*particleMaterialRadius;
     var vertexPosition = quadVertexPosition + particlePosition;
 
     var vertexPositionInRenderSpace = (vertexPosition - g_constants.viewPos) / g_constants.viewExtent;
 
-    var color = particle.color;
+    var color = particleReadonly.color;
 
     if(g_constants.renderMode == RenderModeStandard)
     {

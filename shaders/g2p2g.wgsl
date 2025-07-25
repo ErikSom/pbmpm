@@ -9,14 +9,14 @@
 //!include shapes.inc
 
 @group(0) @binding(0) var<uniform> g_simConstants : SimConstants;
-@group(0) @binding(1) var<storage, read_write> g_particles : array<Particle>;
+@group(0) @binding(1) var<storage, read_write> g_particlesWrite : array<ParticleWrite>;
 @group(0) @binding(2) var<storage> g_gridSrc : array<i32>;
 @group(0) @binding(3) var<storage, read_write> g_gridDst : array<atomic<i32>>;
-@group(0) @binding(4) var<storage, read_write> g_gridToBeCleared : array<i32>;
-@group(0) @binding(5) var<storage> g_bukkitThreadData : array<BukkitThreadData>;
-@group(0) @binding(6) var<storage> g_bukkitParticleData : array<u32>;
-@group(0) @binding(7) var<storage> g_shapes : array<SimShape>;
-@group(0) @binding(8) var<storage, read_write> g_freeIndices : array<atomic<i32>>;
+@group(0) @binding(4) var<storage> g_bukkitThreadData : array<BukkitThreadData>;
+@group(0) @binding(5) var<storage> g_bukkitParticleData : array<u32>;
+@group(0) @binding(6) var<storage> g_shapes : array<SimShape>;
+@group(0) @binding(7) var<storage, read_write> g_freeIndices : array<atomic<i32>>;
+@group(0) @binding(8) var<storage> g_particlesReadonly : array<ParticleReadonly>;
 
 const TotalBukkitEdgeLength = BukkitSize + BukkitHaloSize*2;
 const TileDataSizePerEdge = TotalBukkitEdgeLength * 4;
@@ -138,7 +138,8 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
     {
         // Load Particle
         let myParticleIndex = g_bukkitParticleData[threadData.rangeStart + indexInGroup];
-        var particle = g_particles[myParticleIndex];
+        var particle = g_particlesWrite[myParticleIndex];
+        let particleReadonly = g_particlesReadonly[myParticleIndex];
 
         var p = particle.position;
         let weightInfo = quadraticWeightInit(p);
@@ -206,7 +207,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
             // Do integration
             if(g_simConstants.iteration == g_simConstants.iterationCount -1)
             {
-                if(particle.material == MaterialLiquid)
+                if(particleReadonly.material == MaterialLiquid)
                 {
                     // The liquid material only cares about the determinant of the deformation gradient.
                     // We can use the regular MPM integration below to evolve the deformation gradient, but
@@ -227,7 +228,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                     particle.deformationGradient = (Identity + particle.deformationDisplacement) * particle.deformationGradient;
                 }
 
-                if(particle.material != MaterialLiquid)
+                if(particleReadonly.material != MaterialLiquid)
                 {
                     // SVD is necessary at least for safety clamp
                     var svdResult = svd(particle.deformationGradient);
@@ -236,7 +237,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                     svdResult.Sigma = clamp(svdResult.Sigma, vec2f(0.1), vec2f(10000.0));
 
                     // Plasticity implementations
-                    if(particle.material == MaterialSand)
+                    if(particleReadonly.material == MaterialSand)
                     {
                         // Drucker-Prager sand based on:
                         // Gergely Klár, Theodore Gast, Andre Pradhana, Chuyuan Fu, Craig Schroeder, Chenfanfu Jiang, and Joseph Teran. 2016.
@@ -274,7 +275,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                             }
                         }
                     }
-                    else if(particle.material == MaterialVisco)
+                    else if(particleReadonly.material == MaterialVisco)
                     {
                         // Very simple plasticity with volume preservation
                         let yieldSurface = exp(1-g_simConstants.plasticity);
@@ -358,14 +359,14 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
 
 
             // Save particle
-            g_particles[myParticleIndex] = particle;
+            g_particlesWrite[myParticleIndex] = particle;
         }
 
         
         //if(g_simConstants.iteration != g_simConstants.iterationCount-1)
         {
             // Particle update
-            if(particle.material == MaterialLiquid)
+            if(particleReadonly.material == MaterialLiquid)
             {
                 // Simple liquid viscosity: just remove deviatoric part of the deformation displacement
                 let deviatoric = -1.0*(particle.deformationDisplacement + transpose(particle.deformationDisplacement));
@@ -379,7 +380,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                 let alpha = 0.5*(1.0/particle.liquidDensity - tr(particle.deformationDisplacement) - 1.0);
                 particle.deformationDisplacement += g_simConstants.liquidRelaxation*alpha*Identity; 
             }
-            else if(particle.material == MaterialElastic || particle.material == MaterialVisco)
+            else if(particleReadonly.material == MaterialElastic || particleReadonly.material == MaterialVisco)
             {
                 let F =  (Identity + particle.deformationDisplacement) * particle.deformationGradient;
 
@@ -397,7 +398,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                 particle.deformationDisplacement += g_simConstants.elasticRelaxation*diff;
 
             }
-            else if(particle.material == MaterialSand)
+            else if(particleReadonly.material == MaterialSand)
             {
                 let F =  (Identity + particle.deformationDisplacement) * particle.deformationGradient;
 
@@ -445,7 +446,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                     
                     let offset = vec2f(neighbourCellIndex) - p + 0.5;
 
-                    let weightedMass = weight * particle.mass;
+                    let weightedMass = weight * particleReadonly.mass;
                     let momentum = weightedMass * (particle.displacement +  particle.deformationDisplacement * offset);
 
                     atomicAdd(&s_tileDataDst[gridVertexIdx + 0], encodeFixedPoint(momentum.x, g_simConstants.fixedPointMultiplier));
@@ -455,7 +456,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                     // This is only required if we are going to mix in the grid volume to the liquid volume
                     if(g_simConstants.useGridVolumeForLiquid != 0)
                     {
-                        atomicAdd(&s_tileDataDst[gridVertexIdx + 3], encodeFixedPoint(particle.volume * weight, g_simConstants.fixedPointMultiplier));
+                        atomicAdd(&s_tileDataDst[gridVertexIdx + 3], encodeFixedPoint(particleReadonly.volume * weight, g_simConstants.fixedPointMultiplier));
                     }
                 }
             }
@@ -478,10 +479,5 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
         atomicAdd(&g_gridDst[gridVertexAddress + 1], dyi);
         atomicAdd(&g_gridDst[gridVertexAddress + 2], wi);
         atomicAdd(&g_gridDst[gridVertexAddress + 3], vi);
-
-        g_gridToBeCleared[gridVertexAddress + 0] = 0;
-        g_gridToBeCleared[gridVertexAddress + 1] = 0;
-        g_gridToBeCleared[gridVertexAddress + 2] = 0;
-        g_gridToBeCleared[gridVertexAddress + 3] = 0;
     }
 }

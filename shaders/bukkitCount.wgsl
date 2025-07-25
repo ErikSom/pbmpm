@@ -9,7 +9,7 @@
 
 @group(0) @binding(0) var<uniform> g_simConstants : SimConstants;
 @group(0) @binding(1) var<storage> g_particleCount : array<u32>;
-@group(0) @binding(2) var<storage> g_particles : array<Particle>;
+@group(0) @binding(2) var<storage> g_particles : array<ParticleWrite>;
 @group(0) @binding(3) var<storage, read_write> g_bukkitCounts : array<atomic<u32>>;
 
 @compute @workgroup_size(ParticleDispatchSize)

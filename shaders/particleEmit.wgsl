@@ -11,28 +11,34 @@
 
 @group(0) @binding(0) var<uniform> g_simConstants : SimConstants;
 @group(0) @binding(1) var<storage, read_write> g_particleCount : array<atomic<u32>>;
-@group(0) @binding(2) var<storage, read_write> g_particles : array<Particle>;
+@group(0) @binding(2) var<storage, read_write> g_particlesWrite : array<ParticleWrite>;
 @group(0) @binding(3) var<storage> g_shapes : array<SimShape>;
 @group(0) @binding(4) var<storage, read_write> g_freeIndices : array<atomic<i32>>;
 @group(0) @binding(5) var<storage> g_grid : array<i32>;
+@group(0) @binding(6) var<storage, read_write> g_particlesReadonly : array<ParticleReadonly>;
 
-fn createParticle(position: vec2f, material: f32, mass: f32, volume: f32, color: vec3f) -> Particle
-{
-    return Particle(
+fn createParticleWrite(position: vec2f) -> ParticleWrite { 
+    return ParticleWrite(
         position,
         vec2f(0,0),
         Identity,
         ZeroMatrix,
         1.0,
-        mass,
-        material,
-        volume,
-        0.0,
         1.0,
-        color,
+        0.0,
         1.0
     );
 }
+fn createParticleReadonly(material: f32, mass: f32, volume: f32, color: vec3f) -> ParticleReadonly {
+    return ParticleReadonly(
+        mass,
+        volume,
+        material,
+        0.0,
+        color
+    );
+}
+
 
 fn addParticle(position: vec2f, material: f32, volume: f32, density: f32, jitterScale: f32)
 {
@@ -72,15 +78,11 @@ fn addParticle(position: vec2f, material: f32, volume: f32, density: f32, jitter
 
     let jitter = vec2f(-0.25, -0.25) + 0.5*vec2f(f32(jitterX % 10) / 10, f32(jitterY % 10) / 10);
 
-    var newParticle = createParticle(
-        position + jitter*jitterScale,
-        material,
-        volume*density,
-        volume,
-        color
-    );
+    let writeParticle = createParticleWrite(position + jitter*jitterScale);
+    let readonlyParticle = createParticleReadonly(material, volume * density, volume, color);
 
-    g_particles[particleIndex] = newParticle;
+    g_particlesWrite[particleIndex] = writeParticle;
+    g_particlesReadonly[particleIndex] = readonlyParticle;
 }
 
 @compute @workgroup_size(GridDispatchSize, GridDispatchSize)
