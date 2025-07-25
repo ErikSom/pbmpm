@@ -57,7 +57,15 @@ export function update(gpuContext, inputs)
 {
     let renderUniformBuffer = constructRenderUniformBuffer(gpuContext, inputs);
 
-    const renderingBindGroup = gpu.createBindGroup("Rendering Bind Group", 'particleRender', [renderUniformBuffer, gpuContext.particleBuffer])
+    const renderingBindGroup = gpu.createBindGroup(
+        "Rendering Bind Group",
+        'particleRender',
+        [
+            renderUniformBuffer,
+            gpuContext.particleWriteBuffer,
+            gpuContext.particleReadonlyBuffer
+        ]
+    );
 
     const renderPass = gpuContext.encoder.beginRenderPass({
         colorAttachments: [{

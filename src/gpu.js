@@ -73,12 +73,18 @@ export function resetBuffers(gridSize)
 
     // Construct particle buffer.
     // Must be kept in sync with MPMParticle in particle.inc.wgsl
-    const particleFloatCount = 25;
+    const particleWriteFloatCount = 16;
+    context.particleWriteBuffer = context.device.createBuffer({
+        label: "particlesWrite",
+        size: context.maxParticleCount * 4 * particleWriteFloatCount,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
 
-    context.particleBuffer = context.device.createBuffer({
-        label: "particles",
-        size: context.maxParticleCount * 4 * particleFloatCount,
-        usage: GPUBufferUsage.STORAGE
+    const particleReadonlyFloatCount = 8;
+    context.particleReadonlyBuffer = context.device.createBuffer({
+        label: "particlesReadonly",
+        size: context.maxParticleCount * 4 * particleReadonlyFloatCount,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
     context.particleFreeIndicesBuffer = context.device.createBuffer({

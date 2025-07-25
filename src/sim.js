@@ -131,7 +131,7 @@ function doEmission(gpuContext, simUniformBuffer, inputs, shapeBuffer, gridBuffe
     const threadGroupCountY = gpu.divUp(inputs.gridSize[1], DispatchSizes.GridDispatchSize);
     const gridThreadGroupCounts = [threadGroupCountX, threadGroupCountY, 1];
 
-    gpu.computeDispatch(Shaders.particleEmit, [simUniformBuffer, gpuContext.particleCountBuffer, gpuContext.particleBuffer, shapeBuffer, gpuContext.particleFreeIndicesBuffer, gridBuffer], gridThreadGroupCounts);
+    gpu.computeDispatch(Shaders.particleEmit, [simUniformBuffer, gpuContext.particleCountBuffer, gpuContext.particleWriteBuffer, shapeBuffer, gpuContext.particleFreeIndicesBuffer, gridBuffer, gpuContext.particleReadonlyBuffer], gridThreadGroupCounts);
     gpu.computeDispatch(Shaders.setIndirectArgs, [gpuContext.particleCountBuffer, gpuContext.particleSimDispatchBuffer, gpuContext.particleRenderDispatchBuffer], [1,1,1]);
 }
 
@@ -144,7 +144,7 @@ function bukkitizeParticles(gpuContext, simUniformBuffer, bukkitSystem)
     gpuContext.encoder.clearBuffer(bukkitSystem.particleAllocator);
     gpuContext.encoder.copyBufferToBuffer(bukkitSystem.blankDispatch, 0, bukkitSystem.dispatch, 0, bukkitSystem.dispatch.size);
 
-    gpu.computeDispatch(Shaders.bukkitCount, [simUniformBuffer, gpuContext.particleCountBuffer, gpuContext.particleBuffer, bukkitSystem.countBuffer], gpuContext.particleSimDispatchBuffer);
+    gpu.computeDispatch(Shaders.bukkitCount, [simUniformBuffer, gpuContext.particleCountBuffer, gpuContext.particleWriteBuffer, bukkitSystem.countBuffer], gpuContext.particleSimDispatchBuffer);
 
     let bukkitDispatchSize = [
         gpu.divUp(bukkitSystem.countX, DispatchSizes.GridDispatchSize),
@@ -153,7 +153,7 @@ function bukkitizeParticles(gpuContext, simUniformBuffer, bukkitSystem)
     ];
 
     gpu.computeDispatch(Shaders.bukkitAllocate, [simUniformBuffer, bukkitSystem.countBuffer, bukkitSystem.dispatch, bukkitSystem.threadData, bukkitSystem.particleAllocator, bukkitSystem.indexStart], bukkitDispatchSize);
-    gpu.computeDispatch(Shaders.bukkitInsert, [simUniformBuffer, gpuContext.particleCountBuffer, bukkitSystem.countBuffer2, gpuContext.particleBuffer, bukkitSystem.particleData, bukkitSystem.indexStart], gpuContext.particleSimDispatchBuffer);
+    gpu.computeDispatch(Shaders.bukkitInsert, [simUniformBuffer, gpuContext.particleCountBuffer, bukkitSystem.countBuffer2, gpuContext.particleWriteBuffer, bukkitSystem.particleData, bukkitSystem.indexStart], gpuContext.particleSimDispatchBuffer);
 }
 
 export function update(gpuContext, inputs)
@@ -194,7 +194,9 @@ export function update(gpuContext, inputs)
             const nextNextGrid = gridBuffers[(bufferIdx + 2)%3]
             bufferIdx = (bufferIdx + 1) % 3;
 
-            gpu.computeDispatch(Shaders.g2p2g, [simUniformBuffer, gpuContext.particleBuffer, currentGrid, nextGrid, nextNextGrid, bukkitSystem.threadData, bukkitSystem.particleData, shapeBuffer, gpuContext.particleFreeIndicesBuffer], bukkitSystem.dispatch)
+            gpuContext.encoder.clearBuffer(nextGrid);
+
+            gpu.computeDispatch(Shaders.g2p2g, [simUniformBuffer, gpuContext.particleWriteBuffer, currentGrid, nextGrid, bukkitSystem.threadData, bukkitSystem.particleData, shapeBuffer, gpuContext.particleFreeIndicesBuffer, gpuContext.particleReadonlyBuffer], bukkitSystem.dispatch)
         }
 
         doEmission(gpuContext, simUniformBuffer, inputs, shapeBuffer, gridBuffers[bufferIdx]);
