@@ -48,6 +48,7 @@ export const RenderEnums = {
 
 let g_simFactory;
 let g_shapeFactory;
+export let g_rigidBodyFactory;
 let g_substepIndex = 0;
 
 export function init(insertHandlers)
@@ -106,6 +107,15 @@ export function init(insertHandlers)
     shapeFactory.add('padding', buffer_factory.f32);
     shapeFactory.compile();
 
+
+    const rigidBodyFactory = new buffer_factory.BufferFactory('RigidBody', buffer_factory.Storage);
+    rigidBodyFactory.add('position', buffer_factory.vec2f);
+    rigidBodyFactory.add('linearVelocity', buffer_factory.vec2f);
+    rigidBodyFactory.add('rotation', buffer_factory.f32);
+    rigidBodyFactory.add('angularVelocity', buffer_factory.f32);
+    rigidBodyFactory.add('halfSize', buffer_factory.vec2f);
+    rigidBodyFactory.compile();
+
     function enumInsertHandler(enumValues)
     {
         let insertedText = "";
@@ -120,9 +130,11 @@ export function init(insertHandlers)
     insertHandlers["DispatchSizes"] = enumInsertHandler(DispatchSizes);
     insertHandlers[simFactory.name] = simFactory.getShaderText();
     insertHandlers[shapeFactory.name] = shapeFactory.getShaderText();
+    insertHandlers[rigidBodyFactory.name] = rigidBodyFactory.getShaderText();
 
     g_simFactory = simFactory;
     g_shapeFactory = shapeFactory;
+    g_rigidBodyFactory = rigidBodyFactory;
 }
 
 function doEmission(gpuContext, simUniformBuffer, inputs, shapeBuffer, gridBuffer)
@@ -131,7 +143,7 @@ function doEmission(gpuContext, simUniformBuffer, inputs, shapeBuffer, gridBuffe
     const threadGroupCountY = gpu.divUp(inputs.gridSize[1], DispatchSizes.GridDispatchSize);
     const gridThreadGroupCounts = [threadGroupCountX, threadGroupCountY, 1];
 
-    gpu.computeDispatch(Shaders.particleEmit, [simUniformBuffer, gpuContext.particleCountBuffer, gpuContext.particleWriteBuffer, shapeBuffer, gpuContext.particleFreeIndicesBuffer, gridBuffer, gpuContext.particleReadonlyBuffer], gridThreadGroupCounts);
+    gpu.computeDispatch(Shaders.particleEmit, [simUniformBuffer, gpuContext.particleCountBuffer, gpuContext.particleBuffer, shapeBuffer, gpuContext.particleFreeIndicesBuffer, gridBuffer], gridThreadGroupCounts);
     gpu.computeDispatch(Shaders.setIndirectArgs, [gpuContext.particleCountBuffer, gpuContext.particleSimDispatchBuffer, gpuContext.particleRenderDispatchBuffer], [1,1,1]);
 }
 
@@ -144,7 +156,7 @@ function bukkitizeParticles(gpuContext, simUniformBuffer, bukkitSystem)
     gpuContext.encoder.clearBuffer(bukkitSystem.particleAllocator);
     gpuContext.encoder.copyBufferToBuffer(bukkitSystem.blankDispatch, 0, bukkitSystem.dispatch, 0, bukkitSystem.dispatch.size);
 
-    gpu.computeDispatch(Shaders.bukkitCount, [simUniformBuffer, gpuContext.particleCountBuffer, gpuContext.particleWriteBuffer, bukkitSystem.countBuffer], gpuContext.particleSimDispatchBuffer);
+    gpu.computeDispatch(Shaders.bukkitCount, [simUniformBuffer, gpuContext.particleCountBuffer, gpuContext.particleBuffer, bukkitSystem.countBuffer], gpuContext.particleSimDispatchBuffer);
 
     let bukkitDispatchSize = [
         gpu.divUp(bukkitSystem.countX, DispatchSizes.GridDispatchSize),
@@ -153,7 +165,7 @@ function bukkitizeParticles(gpuContext, simUniformBuffer, bukkitSystem)
     ];
 
     gpu.computeDispatch(Shaders.bukkitAllocate, [simUniformBuffer, bukkitSystem.countBuffer, bukkitSystem.dispatch, bukkitSystem.threadData, bukkitSystem.particleAllocator, bukkitSystem.indexStart], bukkitDispatchSize);
-    gpu.computeDispatch(Shaders.bukkitInsert, [simUniformBuffer, gpuContext.particleCountBuffer, bukkitSystem.countBuffer2, gpuContext.particleWriteBuffer, bukkitSystem.particleData, bukkitSystem.indexStart], gpuContext.particleSimDispatchBuffer);
+    gpu.computeDispatch(Shaders.bukkitInsert, [simUniformBuffer, gpuContext.particleCountBuffer, bukkitSystem.countBuffer2, gpuContext.particleBuffer, bukkitSystem.particleData, bukkitSystem.indexStart], gpuContext.particleSimDispatchBuffer);
 }
 
 export function update(gpuContext, inputs)
@@ -161,6 +173,16 @@ export function update(gpuContext, inputs)
     if(inputs.doReset)
     {
         g_substepIndex = 0;
+    }
+
+    const bodyData = window.getBodyData ? window.getBodyData(inputs) : [];
+
+    gpuContext.lastFrameInputs = inputs;
+    gpuContext.lastFrameBodyData = bodyData;
+
+    if (bodyData.length > 0) {
+        const rigidBodyDataArray = g_rigidBodyFactory.constructCPUArray(bodyData);
+        gpuContext.device.queue.writeBuffer(gpuContext.rigidBodiesBuffer, 0, rigidBodyDataArray);
     }
 
     let bufferIdx = 0;
@@ -180,6 +202,9 @@ export function update(gpuContext, inputs)
     } 
 
     const substepCount = time.doTimeRegulation(inputs);
+
+    gpuContext.encoder.clearBuffer(gpuContext.forceResultsBuffer);
+
     for(let substepIdx = 0; substepIdx < substepCount; ++substepIdx)
     {
         var simUniformBuffer = constructSimUniformBuffer(gpuContext, inputs, bukkitSystem, 0);
@@ -191,19 +216,82 @@ export function update(gpuContext, inputs)
 
             const currentGrid = gridBuffers[bufferIdx]
             const nextGrid = gridBuffers[(bufferIdx + 1)%3]
-            const nextNextGrid = gridBuffers[(bufferIdx + 2)%3]
             bufferIdx = (bufferIdx + 1) % 3;
 
             gpuContext.encoder.clearBuffer(nextGrid);
 
-            gpu.computeDispatch(Shaders.g2p2g, [simUniformBuffer, gpuContext.particleWriteBuffer, currentGrid, nextGrid, bukkitSystem.threadData, bukkitSystem.particleData, shapeBuffer, gpuContext.particleFreeIndicesBuffer, gpuContext.particleReadonlyBuffer], bukkitSystem.dispatch)
+            gpu.computeDispatch(Shaders.g2p2g, [
+                [
+                    simUniformBuffer,
+                    gpuContext.particleBuffer,
+                    currentGrid,
+                    nextGrid,
+                    bukkitSystem.threadData,
+                    bukkitSystem.particleData,
+                    shapeBuffer,
+                    gpuContext.particleFreeIndicesBuffer,
+                    gpuContext.rigidBodiesBuffer,
+                    gpuContext.forceResultsBuffer
+                ]
+            ], bukkitSystem.dispatch);
         }
 
         doEmission(gpuContext, simUniformBuffer, inputs, shapeBuffer, gridBuffers[bufferIdx]);
         bukkitizeParticles(gpuContext, simUniformBuffer, bukkitSystem);
 
         g_substepIndex = (g_substepIndex + 1);
-    }  
+    }
+}
+
+async function applyForcesToBodies(gpuContext, inputs, bodyData) {
+    if (!bodyData || bodyData.length === 0) {
+        return;
+    }
+
+    const stagingBuffer = gpuContext.forceResultsStagingBuffer;
+
+    // This is the key to an efficient, non-stalling pipeline.
+    // We request to map the buffer from the PREVIOUS frame.
+    try {
+        await stagingBuffer.mapAsync(GPUMapMode.READ);
+        
+        // The data was written as integers, so we read it back as an Int32Array.
+        const resultsArray = new Int32Array(stagingBuffer.getMappedRange());
+        
+        const fixedPointMultiplier = Math.ceil(Math.pow(10, inputs.fixedPointMultiplierExponent));
+        const forcesToApply = [];
+
+        for (let i = 0; i < bodyData.length; i++) {
+            const offset = i * 4; // Each result is 4 ints: fx, fy, torque, padding
+
+            // Decode the fixed-point integers back into floating-point numbers.
+            const force = {
+                x: resultsArray[offset + 0] / fixedPointMultiplier,
+                y: resultsArray[offset + 1] / fixedPointMultiplier,
+            };
+            const torque = resultsArray[offset + 2] / fixedPointMultiplier;
+            
+            forcesToApply.push({ force, torque });
+        }
+
+        // This is the placeholder function you will create to talk to Box2D.
+        if (window.applyForces) {
+            window.applyForces(forcesToApply);
+        }
+
+
+        forcesToApply.forEach((forceData, index) => {
+            if(forceData.force.x === 0 && forceData.force.y === 0 && forceData.torque === 0)
+            {
+                return;
+            }
+            console.log(`Applying force to body ${index}:`, forceData.force, "Torque:", forceData.torque);
+        });
+    } catch (e) {
+        console.error("Error reading back forces:", e);
+    } finally {
+        stagingBuffer.unmap();
+    }
 }
 
 function constructBukkitSystem(gpuContext, inputs) {
@@ -356,6 +444,11 @@ function constructShapeBuffer(gpuContext, inputs)
                 emissionRate: shape.emissionRate ? shape.emissionRate : 0,
                 emissionSpeed: shape.emissionSpeed ? shape.emissionSpeed : 0,
             })
+
+            if(shape.function == SimEnums.ShapeFunctionCollider){
+                console.log(scaledPosition.toArray(), v.mulScalar(shape.halfSize, renderToSimScale).toArray())
+            }
+
         }
     }
 

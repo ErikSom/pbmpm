@@ -5,6 +5,7 @@
 "use strict";
 
 import * as shader from "./shader.js"
+import { g_rigidBodyFactory } from "./sim.js";
 
 let context = {
     pipelines: {},
@@ -71,19 +72,37 @@ export function resetBuffers(gridSize)
     context.particleSimDispatchBuffer = construct4IntBuffer('particleSimDispatchBuffer', GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST, [0,1,1,0]);
     context.particleFreeCountStagingBuffer = construct4IntBuffer('particleFreeCountStagingBuffer', GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST, [0,0,0,0]);
 
-    // Construct particle buffer.
-    // Must be kept in sync with MPMParticle in particle.inc.wgsl
-    const particleWriteFloatCount = 16;
-    context.particleWriteBuffer = context.device.createBuffer({
-        label: "particlesWrite",
-        size: context.maxParticleCount * 4 * particleWriteFloatCount,
+    const maxRigidBodies = 128;
+
+    // Buffer to send Box2D body data to the GPU
+    context.rigidBodiesBuffer = context.device.createBuffer({
+        label: "rigidBodiesBuffer (CPU->GPU)",
+        size: maxRigidBodies * g_rigidBodyFactory.getTotalSizeInWords() * 4,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
-    const particleReadonlyFloatCount = 8;
-    context.particleReadonlyBuffer = context.device.createBuffer({
-        label: "particlesReadonly",
-        size: context.maxParticleCount * 4 * particleReadonlyFloatCount,
+
+    // We use 4 floats per body: force.x, force.y, torque, and padding.
+    const forceResultSize = 16; // 4 floats * 4 bytes
+    context.forceResultsBuffer = context.device.createBuffer({
+        label: "forceResultsBuffer (GPU->CPU)",
+        size: maxRigidBodies * forceResultSize,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+    });
+
+    // ✨ NEW: Staging buffer to read force results back to the CPU without stalling
+    context.forceResultsStagingBuffer = context.device.createBuffer({
+        label: "forceResultsStagingBuffer",
+        size: maxRigidBodies * forceResultSize,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+
+    // Construct particle buffer.
+    // Must be kept in sync with MPMParticle in particle.inc.wgsl
+    const particleFloatCount = 24;
+    context.particleBuffer = context.device.createBuffer({
+        label: "particleBuffer",
+        size: context.maxParticleCount * 4 * particleFloatCount,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
@@ -108,6 +127,7 @@ export function endFrame()
     const canReadbackParticleCount = context.particleCountStagingBuffer.mapState === 'unmapped';
     const canReadbackParticleFreeCount = context.particleFreeCountStagingBuffer.mapState === 'unmapped';
     const canReadbackTimeStamps = context.canTimeStamp && context.timeStampResultBuffer.mapState === 'unmapped';
+    const canReadbackForces = context.forceResultsStagingBuffer.mapState === 'unmapped';
     
     if(canReadbackParticleCount)
     {
@@ -126,6 +146,15 @@ export function endFrame()
         context.encoder.copyBufferToBuffer(context.timeStampResolveBuffer, 0, context.timeStampResultBuffer, 0, context.timeStampResultBuffer.size);
     }
 
+    if (canReadbackForces)
+    {
+        context.encoder.copyBufferToBuffer(
+            context.forceResultsBuffer, 0, 
+            context.forceResultsStagingBuffer, 0, 
+            context.forceResultsStagingBuffer.size
+        );
+    }
+
     context.device.queue.submit([context.encoder.finish()]);
 
     if(canReadbackParticleCount)
@@ -141,6 +170,10 @@ export function endFrame()
     if(canReadbackTimeStamps)
     {
         readbackTimeStamps();
+    }
+
+    if(canReadbackForces) {
+        readbackImpulses(context.lastFrameInputs, context.lastFrameBodyData);
     }
 
     context.encoder = null;
@@ -292,7 +325,10 @@ export async function init(insertHandlers)
     context.device = await context.adapter.requestDevice({
         requiredFeatures: context.canTimeStamp ? [
              ['timestamp-query']
-        ] : undefined
+        ] : undefined,
+        requiredLimits: {
+            maxStorageBuffersPerShaderStage: 10
+        }
     });
     
     await shader.init(context.device, insertHandlers);
@@ -444,4 +480,69 @@ function readbackTimeStamps()
             context.timeStampResultBuffer.unmap();
         }
     }).catch(() => {});
+}
+
+function readbackImpulses(inputs, bodyData) {
+    const staging = context.forceResultsStagingBuffer;
+    if (!staging || staging.mapState !== 'unmapped') return;
+
+    context.device.queue.onSubmittedWorkDone().then(() => {
+        // Bail if buffers were reset/recreated since we queued this.
+        if (
+            staging !== context.forceResultsStagingBuffer ||
+            staging.mapState !== 'unmapped') {
+            return;
+        }
+
+        staging.mapAsync(GPUMapMode.READ).then(() => {
+            let dataCopy;
+            try {
+                // Use the same object we mapped.
+                const mappedRange = staging.getMappedRange();
+                // Copy out immediately so we can unmap right away.
+                dataCopy = new Int32Array(mappedRange.slice(0));
+            } catch (err) {
+                // Make sure we leave the buffer unmapped on error.
+                try { staging.unmap(); } catch {}
+                console.error("Impulse readback failed during getMappedRange.", err);
+                return;
+            }
+
+            try { staging.unmap(); } catch {}
+
+            // Now, safely process the data we copied (CPU-side).
+            if (!inputs || !bodyData) {
+                console.warn("Skipping impulse application due to missing inputs/bodyData for this frame.");
+                return;
+            }
+
+            // This value must match the 'forceMultiplier' (now impulseMultiplier) in sim.js
+            const impulseMultiplier = 1000.0;
+            const wordsPerBody = 4; // ix, iy, angular_impulse, padding
+            const maxBodiesFromBuffer = Math.floor(dataCopy.length / wordsPerBody);
+            const bodyCount = Math.min(bodyData.length, maxBodiesFromBuffer);
+
+            const impulsesToApply = [];
+
+            for (let i = 0; i < bodyCount; i++) {
+                const offset = i * wordsPerBody;
+                const ix = dataCopy[offset + 0] / impulseMultiplier;
+                const iy = dataCopy[offset + 1] / impulseMultiplier;
+                const angularImpulse = dataCopy[offset + 2] / impulseMultiplier;
+
+                if (ix !== 0 || iy !== 0 || angularImpulse !== 0) {
+                    impulsesToApply.push({ bodyIndex: i, impulse: { x: ix, y: iy }, angularImpulse });
+                }
+            }
+
+            // This function should now call Box2D's ApplyLinearImpulse and ApplyAngularImpulse
+            if (window.applyImpulses && impulsesToApply.length > 0) {
+                try { window.applyImpulses(inputs, impulsesToApply); } catch (e) {
+                    console.error("applyImpulses threw:", e);
+                }
+            }
+        }).catch((e) => {
+            console.error("mapAsync failed for impulse readback. This can happen if the GPU device is lost.", e);
+        });
+    });
 }

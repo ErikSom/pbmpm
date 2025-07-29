@@ -8,15 +8,18 @@
 //!include particle.inc
 //!include shapes.inc
 
+//!insert RigidBody
+
 @group(0) @binding(0) var<uniform> g_simConstants : SimConstants;
-@group(0) @binding(1) var<storage, read_write> g_particlesWrite : array<ParticleWrite>;
+@group(0) @binding(1) var<storage, read_write> g_particles : array<Particle>;
 @group(0) @binding(2) var<storage> g_gridSrc : array<i32>;
 @group(0) @binding(3) var<storage, read_write> g_gridDst : array<atomic<i32>>;
 @group(0) @binding(4) var<storage> g_bukkitThreadData : array<BukkitThreadData>;
 @group(0) @binding(5) var<storage> g_bukkitParticleData : array<u32>;
 @group(0) @binding(6) var<storage> g_shapes : array<SimShape>;
 @group(0) @binding(7) var<storage, read_write> g_freeIndices : array<atomic<i32>>;
-@group(0) @binding(8) var<storage> g_particlesReadonly : array<ParticleReadonly>;
+@group(0) @binding(8) var<storage> g_rigidBodies : array<RigidBody>;
+@group(0) @binding(9) var<storage, read_write> g_forceResults : array<atomic<i32>>;
 
 const TotalBukkitEdgeLength = BukkitSize + BukkitHaloSize*2;
 const TileDataSizePerEdge = TotalBukkitEdgeLength * 4;
@@ -99,6 +102,56 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
             }
         }
 
+
+        // Dynamic rigid bodies (with velocity added)
+        // let bodyCount = arrayLength(&g_rigidBodies);
+        // for(var bodyIndex = 0u; bodyIndex < bodyCount; bodyIndex++)
+        // {
+        //     let body = g_rigidBodies[bodyIndex];
+        //     let bodyShape = SimShape(
+        //         body.position, body.halfSize, 0.0, body.rotation * 180.0 / 3.14159,
+        //         ShapeFunctionCollider, ShapeTypeBox, 0.0, 0.0, 0.0, 0.0
+        //     );
+
+        //     let displacedGridPosition = gridPosition + gridDisplacement;
+        //     let collideResult = collide(bodyShape, displacedGridPosition);
+
+        //     if(collideResult.collides)
+        //     {
+        //         // Use the stable static logic as a base
+        //         let gap = min(0.0, dot(collideResult.normal, collideResult.pointOnCollider - gridPosition));
+        //         var penetration = dot(collideResult.normal, gridDisplacement) - gap;
+
+        //         // Account for the body's own motion (linear + angular)
+        //         let r = gridPosition - body.position;
+        //         let tangentialVelocity = vec2f(-body.angularVelocity * r.y, body.angularVelocity * r.x);
+        //         let totalBodyVelocity = body.linearVelocity + tangentialVelocity;
+        //         let bodyDisplacement = totalBodyVelocity * g_simConstants.deltaTime;
+        //         penetration -= dot(collideResult.normal, bodyDisplacement);
+
+        //         let radialImpulse = max(penetration, 0.0);
+
+        //         // Calculate and accumulate forces if there is an impulse
+        //         if (radialImpulse > 0.0 && w > 1e-6) {
+        //             let force = w * radialImpulse * collideResult.normal / (g_simConstants.deltaTime * g_simConstants.deltaTime);
+        //             let torque = r.x * force.y - r.y * force.x;
+
+        //             let i_force = vec2i(
+        //                 encodeFixedPoint(force.x, g_simConstants.fixedPointMultiplier),
+        //                 encodeFixedPoint(force.y, g_simConstants.fixedPointMultiplier)
+        //             );
+        //             let i_torque = encodeFixedPoint(torque, g_simConstants.fixedPointMultiplier);
+        //             let resultsIndex = bodyIndex * 4u;
+
+        //             atomicAdd(&g_forceResults[resultsIndex + 0u], i_force.x);
+        //             atomicAdd(&g_forceResults[resultsIndex + 1u], i_force.y);
+        //             atomicAdd(&g_forceResults[resultsIndex + 2u], i_torque);
+        //         }
+
+        //         gridDisplacement -= radialImpulse * collideResult.normal;
+        //     }
+        // }
+
         // Collision detection against guardian shape
 
         // Grid vertices near or inside the guardian region should have their displacement values
@@ -138,8 +191,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
     {
         // Load Particle
         let myParticleIndex = g_bukkitParticleData[threadData.rangeStart + indexInGroup];
-        var particle = g_particlesWrite[myParticleIndex];
-        let particleReadonly = g_particlesReadonly[myParticleIndex];
+        var particle = g_particles[myParticleIndex];
 
         var p = particle.position;
         let weightInfo = quadraticWeightInit(p);
@@ -207,7 +259,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
             // Do integration
             if(g_simConstants.iteration == g_simConstants.iterationCount -1)
             {
-                if(particleReadonly.material == MaterialLiquid)
+                if(particle.material == MaterialLiquid)
                 {
                     // The liquid material only cares about the determinant of the deformation gradient.
                     // We can use the regular MPM integration below to evolve the deformation gradient, but
@@ -228,7 +280,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                     particle.deformationGradient = (Identity + particle.deformationDisplacement) * particle.deformationGradient;
                 }
 
-                if(particleReadonly.material != MaterialLiquid)
+                if(particle.material != MaterialLiquid)
                 {
                     // SVD is necessary at least for safety clamp
                     var svdResult = svd(particle.deformationGradient);
@@ -237,7 +289,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                     svdResult.Sigma = clamp(svdResult.Sigma, vec2f(0.1), vec2f(10000.0));
 
                     // Plasticity implementations
-                    if(particleReadonly.material == MaterialSand)
+                    if(particle.material == MaterialSand)
                     {
                         // Drucker-Prager sand based on:
                         // Gergely Klár, Theodore Gast, Andre Pradhana, Chuyuan Fu, Craig Schroeder, Chenfanfu Jiang, and Joseph Teran. 2016.
@@ -275,7 +327,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                             }
                         }
                     }
-                    else if(particleReadonly.material == MaterialVisco)
+                    else if(particle.material == MaterialVisco)
                     {
                         // Very simple plasticity with volume preservation
                         let yieldSurface = exp(1-g_simConstants.plasticity);
@@ -352,21 +404,61 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                     }
                 }
 
-                // Ensure particles are inside the simulation limits
-                particle.position = projectInsideGuardian(particle.position, g_simConstants.gridSize, GuardianSize);
+                // Handle Rigid Bodies
+// Handle Rigid Body Interaction (Action-Reaction Model)
+let bodyCount = arrayLength(&g_rigidBodies);
+for (var bodyIndex = 0u; bodyIndex < bodyCount; bodyIndex++)
+{
+    let body = g_rigidBodies[bodyIndex];
+    let bodyShape = SimShape(
+        body.position, body.halfSize, 0.0, body.rotation * 180.0 / 3.14159,
+        ShapeFunctionCollider, ShapeTypeBox, 0.0, 0.0, 0.0, 0.0
+    );
+
+    let collideResult = collide(bodyShape, particle.position);
+
+    // Check for actual penetration to calculate forces.
+    if (collideResult.collides && collideResult.penetration > 0.0)
+    {
+        let clampedPenetration = min(collideResult.penetration, 0.5);
+
+        // ✅ Calculate impulse (J ≈ -m * v_correction) instead of force.
+        // v_correction to resolve penetration is (penetration * normal) / dt.
+        // J = m * v_correction = m * penetration * normal / dt.
+        let impulseOnBody = particle.mass * clampedPenetration * collideResult.normal / g_simConstants.deltaTime;
+
+        // Calculate angular impulse (L = r x J)
+        let r = collideResult.pointOnCollider - body.position;
+        let angularImpulseOnBody = r.x * impulseOnBody.y - r.y * impulseOnBody.x;
+
+        // Rename variables for clarity (optional, but good practice).
+        // Let's reuse forceMultiplier as impulseMultiplier.
+        let impulseMultiplier = 1.0; 
+        let i_impulse = vec2i(
+            encodeFixedPoint(impulseOnBody.x, u32(impulseMultiplier)),
+            encodeFixedPoint(impulseOnBody.y, u32(impulseMultiplier))
+        );
+        let i_angularImpulse = encodeFixedPoint(angularImpulseOnBody, u32(impulseMultiplier));
+        
+        let resultsIndex = bodyIndex * 4u;
+        atomicAdd(&g_forceResults[resultsIndex + 0u], i_impulse.x);
+        atomicAdd(&g_forceResults[resultsIndex + 1u], i_impulse.y);
+        atomicAdd(&g_forceResults[resultsIndex + 2u], i_angularImpulse);
+        
+        particle.displacement -= clampedPenetration * collideResult.normal;
+    }
+}
             }
 
-
-
             // Save particle
-            g_particlesWrite[myParticleIndex] = particle;
+            g_particles[myParticleIndex] = particle;
         }
 
         
         //if(g_simConstants.iteration != g_simConstants.iterationCount-1)
         {
             // Particle update
-            if(particleReadonly.material == MaterialLiquid)
+            if(particle.material == MaterialLiquid)
             {
                 // Simple liquid viscosity: just remove deviatoric part of the deformation displacement
                 let deviatoric = -1.0*(particle.deformationDisplacement + transpose(particle.deformationDisplacement));
@@ -380,7 +472,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                 let alpha = 0.5*(1.0/particle.liquidDensity - tr(particle.deformationDisplacement) - 1.0);
                 particle.deformationDisplacement += g_simConstants.liquidRelaxation*alpha*Identity; 
             }
-            else if(particleReadonly.material == MaterialElastic || particleReadonly.material == MaterialVisco)
+            else if(particle.material == MaterialElastic || particle.material == MaterialVisco)
             {
                 let F =  (Identity + particle.deformationDisplacement) * particle.deformationGradient;
 
@@ -398,7 +490,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                 particle.deformationDisplacement += g_simConstants.elasticRelaxation*diff;
 
             }
-            else if(particleReadonly.material == MaterialSand)
+            else if(particle.material == MaterialSand)
             {
                 let F =  (Identity + particle.deformationDisplacement) * particle.deformationGradient;
 
@@ -446,7 +538,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                     
                     let offset = vec2f(neighbourCellIndex) - p + 0.5;
 
-                    let weightedMass = weight * particleReadonly.mass;
+                    let weightedMass = weight * particle.mass;
                     let momentum = weightedMass * (particle.displacement +  particle.deformationDisplacement * offset);
 
                     atomicAdd(&s_tileDataDst[gridVertexIdx + 0], encodeFixedPoint(momentum.x, g_simConstants.fixedPointMultiplier));
@@ -456,7 +548,7 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                     // This is only required if we are going to mix in the grid volume to the liquid volume
                     if(g_simConstants.useGridVolumeForLiquid != 0)
                     {
-                        atomicAdd(&s_tileDataDst[gridVertexIdx + 3], encodeFixedPoint(particleReadonly.volume * weight, g_simConstants.fixedPointMultiplier));
+                        atomicAdd(&s_tileDataDst[gridVertexIdx + 3], encodeFixedPoint(particle.volume * weight, g_simConstants.fixedPointMultiplier));
                     }
                 }
             }

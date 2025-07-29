@@ -62,8 +62,7 @@ export function update(gpuContext, inputs)
         'particleRender',
         [
             renderUniformBuffer,
-            gpuContext.particleWriteBuffer,
-            gpuContext.particleReadonlyBuffer
+            gpuContext.particleBuffer,
         ]
     );
 

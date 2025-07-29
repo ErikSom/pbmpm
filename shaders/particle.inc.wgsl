@@ -2,7 +2,7 @@
 // Copyright (c) 2024 Electronic Arts.  All rights reserved.
 //-----------------------------------------------------------------------------
 
-struct ParticleWrite
+struct Particle
 {
     position : vec2f,
     displacement : vec2f,
@@ -13,18 +13,14 @@ struct ParticleWrite
     logJp : f32,
     lambda: f32,
     enabled: f32,
-}; // 16 floats total
 
-// "Readonly" Data: Static physical and render properties.
-// This is READ-ONLY in the main solver loop.
-struct ParticleReadonly
-{
+    // Static "readonly" data
     mass: f32,
     volume: f32,
     material: f32,
     padding: f32, // pad to align color
     color: vec3f,
-}; // 8 floats total (with padding)
+}; // 24 floats total
 
 // For safety, we keep particles `guardianSize` cells away from the outside of the domain.
 // To implement this we clamp the grid values to ensure they do not contribute towards moving

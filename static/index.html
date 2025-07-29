@@ -43,6 +43,259 @@
   </div>
 
    <script type="module" src="../src/main.js"></script>
+
+   <canvas id="demo-canvas" width="800" height="600" style="position:fixed; top:0; left:0; z-index:1; width:800px; height:600px;"></canvas>
+
+   <script type="module">
+     import Box2DFactory from './box2d/entry.mjs';
+
+     import DebugDrawRenderer from './box2d/utils/debugDraw.mjs';
+
+      const params = new URLSearchParams(window.location.search);
+
+      const box2d = await Box2DFactory();
+      const canvas = document.getElementById("demo-canvas");
+
+      canvas.width = 800;
+      canvas.height = 600;
+      canvas.style.width = `800px`;
+      canvas.style.height = `600px`;
+      Object.assign(canvas.style, {
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        zIndex: 1,
+        pointerEvents: 'none',
+      });
+
+      const ctx = canvas.getContext("2d");
+
+      const pixelToMeters = 32;
+      const subStepCount = 4;
+
+      const hdRendering = params.get('hd') === '1';
+
+      const debugDraw = new DebugDrawRenderer(box2d, ctx, {pixelToMeters, autoHD: hdRendering}); // true for high dpi
+      debugDraw.offset = {
+        x: 0,
+        y: 0
+      };
+
+
+      const {
+        b2DefaultWorldDef,
+        b2CreateWorld,
+        b2CreateBody,
+        b2CreatePolygonShape,
+        b2CreateSegmentShape,
+        b2World_Step,
+        b2MakeBox,
+        b2DefaultBodyDef,
+        b2DefaultShapeDef,
+        b2BodyType,
+        b2Segment,
+        b2Vec2,
+        b2Rot,
+        TaskSystem,
+        b2CreateThreadedWorld,
+        b2World_GetProfile,
+        b2Body_GetPosition,
+        b2Body_GetLinearVelocity,
+        b2Body_GetRotation,
+        b2Rot_GetAngle,
+        b2Body_GetAngularVelocity,
+        b2Body_ApplyLinearImpulseToCenter,
+        b2Body_ApplyAngularImpulse,
+      } = box2d;
+
+      const worldDef = b2DefaultWorldDef();
+      worldDef.gravity.Set(0, -10);
+
+      let worldId, taskSystem;
+
+      const statsLevel = params.get('stats') || 2;
+
+      if(params.get('threading') === '1') {
+        taskSystem = new TaskSystem(navigator.hardwareConcurrency);
+        worldId = b2CreateThreadedWorld(worldDef, taskSystem);
+      } else {
+        worldId = b2CreateWorld(worldDef);
+      }
+
+      const bd_ground = new b2DefaultBodyDef();
+      const groundId = b2CreateBody(worldId, bd_ground);
+
+      const shapeDefSegment = new b2DefaultShapeDef();
+      shapeDefSegment.density = 1.0;
+      shapeDefSegment.material.friction = 0.3;
+
+      {
+        const segment = new b2Segment();
+        segment.point1 = new b2Vec2(0, -0);
+        segment.point2 = new b2Vec2(6, -7);
+
+        b2CreateSegmentShape(groundId, shapeDefSegment, segment);
+      }
+
+      {
+        const segment = new b2Segment();
+        segment.point1 = new b2Vec2(3, -18);
+        segment.point2 = new b2Vec2(22, -18)
+        b2CreateSegmentShape(groundId, shapeDefSegment, segment);
+      }
+
+
+      const rot = new b2Rot();
+      rot.SetAngle(0);
+
+      const bodyIds = [];
+      const v = new b2Vec2();
+
+      function createPyramid(worldId, height, gap) {
+        const boxWidth = 2.0;
+        const boxHeight = 2.0;
+
+        for (let row = 0; row < height; row++) {
+            const boxesInRow = height - row;
+
+            const startX = -(boxesInRow - 1) * (boxWidth + gap) / 2 + boxWidth * boxesInRow / 2;
+
+            for (let i = 0; i < boxesInRow; i++) {
+                const bd = new b2DefaultBodyDef();
+                bd.type = b2BodyType.b2_dynamicBody;
+
+                const xPos = startX + i * (boxWidth + gap);
+                const yPos = (boxHeight + gap) * row + boxHeight;
+                bd.position = v.Set(xPos, yPos);
+
+                const bodyId = b2CreateBody(worldId, bd);
+
+                bodyIds.push(bodyId);
+
+                const shapeDefDynamic = new b2DefaultShapeDef();
+                shapeDefDynamic.density = 1.0;
+                shapeDefDynamic.material.friction = 0.3;
+
+                const box = b2MakeBox(boxWidth/2, boxHeight/2);
+                b2CreatePolygonShape(bodyId, shapeDefDynamic, box);
+            }
+        }
+      }
+
+      const pyramidHeight = 2;
+      const boxGap = 0.1;
+      createPyramid(worldId, pyramidHeight, boxGap);
+
+      function drawProfile(stepDuration, profile) {
+        const hdScale = hdRendering ? (Math.min(window.devicePixelRatio || 1, 2) || 1) : 1;
+        ctx.font = `${16 * hdScale}px Arial`;
+        ctx.fillStyle = "black";
+        if (statsLevel < 1) return;
+        ctx.fillText(`fps: ${Math.floor(1000/stepDuration)}`, 10 * hdScale, 20 * hdScale);
+        ctx.fillText(`threading: ${taskSystem ? 'on' : 'off'}`, 100 * hdScale, 20 * hdScale);
+        debugDraw.debugMemory = true;
+        if (statsLevel < 2) return;
+        ctx.fillText(`step: ${profile.step.toFixed(2)}ms`, 10 * hdScale, 40 * hdScale);
+        ctx.fillText(`pairs: ${profile.pairs.toFixed(2)}ms`, 10 * hdScale, 60 * hdScale);
+        ctx.fillText(`collide: ${profile.collide.toFixed(2)}ms`, 10 * hdScale, 80 * hdScale);
+        ctx.fillText(`solve: ${profile.solve.toFixed(2)}ms`, 10 * hdScale, 100 * hdScale);
+        ctx.fillText(`mergeIslands: ${profile.mergeIslands.toFixed(2)}ms`, 10 * hdScale, 120 * hdScale);
+        ctx.fillText(`prepareStages: ${profile.prepareStages.toFixed(2)}ms`, 10 * hdScale, 140 * hdScale);
+        ctx.fillText(`solveConstraints: ${profile.solveConstraints.toFixed(2)}ms`, 10 * hdScale, 160 * hdScale);
+        ctx.fillText(`prepareConstraints: ${profile.prepareConstraints.toFixed(2)}ms`, 10 * hdScale, 180 * hdScale);
+        ctx.fillText(`integrateVelocities: ${profile.integrateVelocities.toFixed(2)}ms`, 10 * hdScale, 200 * hdScale);
+        ctx.fillText(`warmStart: ${profile.warmStart.toFixed(2)}ms`, 10 * hdScale, 220 * hdScale);
+        ctx.fillText(`solveImpulses: ${profile.solveImpulses.toFixed(2)}ms`, 10 * hdScale, 240 * hdScale);
+        ctx.fillText(`integratePositions: ${profile.integratePositions.toFixed(2)}ms`, 10 * hdScale, 260 * hdScale);
+        ctx.fillText(`applyRestitution: ${profile.applyRestitution.toFixed(2)}ms`, 10 * hdScale, 280 * hdScale);
+        ctx.fillText(`storeImpulses: ${profile.storeImpulses.toFixed(2)}ms`, 10 * hdScale, 300 * hdScale);
+        ctx.fillText(`transforms: ${profile.transforms.toFixed(2)}ms`, 10 * hdScale, 320 * hdScale);
+        ctx.fillText(`splitIslands: ${profile.splitIslands.toFixed(2)}ms`, 10 * hdScale, 340 * hdScale);
+        ctx.fillText(`hitEvents: ${profile.hitEvents.toFixed(2)}ms`, 10 * hdScale, 360 * hdScale);
+        ctx.fillText(`refit: ${profile.refit.toFixed(2)}ms`, 10 * hdScale, 380 * hdScale);
+        ctx.fillText(`bullets: ${profile.bullets.toFixed(2)}ms`, 10 * hdScale, 400 * hdScale);
+        ctx.fillText(`hitEvents: ${profile.hitEvents.toFixed(2)}ms`, 10 * hdScale, 420 * hdScale);
+        ctx.fillText(`sleepIslands: ${profile.sleepIslands.toFixed(2)}ms`, 10 * hdScale, 440 * hdScale);
+        ctx.fillText(`sensors: ${profile.sensors.toFixed(2)}ms`, 10 * hdScale, 460 * hdScale);
+      }
+
+      let handle;
+      function loop(prevMs) {
+          const nowMs = window.performance.now();
+          handle = requestAnimationFrame(loop.bind(null, nowMs));
+          const deltaMs = Math.min(nowMs-prevMs, 1000/120);
+
+          const start = performance.now();
+          b2World_Step(worldId, deltaMs / 1000, subStepCount);
+          const end = performance.now();
+          taskSystem?.ClearTasks();
+
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          debugDraw.Draw(worldId);
+
+          const duration = end - start;
+          const profile = b2World_GetProfile(worldId);
+          drawProfile(duration, profile);
+          profile.delete();
+      };
+
+      // This is an example; adapt it to your Box2D setup
+      // for (let body = box2dWorld.GetBodyList(); body; body = body.GetNext()) {
+      //     const pos = body.GetPosition();
+      //     const vel = body.GetLinearVelocity();
+      //     const fixture = body.GetFixtureList();
+      //     const shape = fixture.GetShape(); // Assuming box shapes for now
+      //
+      //     bodyData.push({
+      //         position: [pos.x, pos.y],
+      //         linearVelocity: [vel.x, vel.y],
+      //         rotation: body.GetAngle(),
+      //         angularVelocity: body.GetAngularVelocity(),
+      //         halfSize: [shape.m_vertices[1].x, shape.m_vertices[1].y] // Example for box
+      //     });
+      // }
+
+      window.getBodyData = (inputs) => {
+          const renderToSimScale = 1.0/inputs.simResDivisor;
+          const simConversion = pixelToMeters * renderToSimScale;
+
+          const bodies = [];
+          for (let i = 0; i < bodyIds.length; i++) {
+              const bodyId = bodyIds[i];
+              const pos = b2Body_GetPosition(bodyId);
+              const vel = b2Body_GetLinearVelocity(bodyId);
+              const rotation = b2Rot_GetAngle(b2Body_GetRotation(bodyId));
+
+              const simPos = [pos.x * simConversion, inputs.gridSize[1] + pos.y * simConversion];
+              bodies.push({
+                  id: bodyId,
+                  position: simPos,
+                  linearVelocity: [vel.x * simConversion, vel.y * simConversion],
+                  rotation: rotation,
+                  angularVelocity: b2Body_GetAngularVelocity(bodyId),
+                  halfSize: [1 * simConversion, 1 * simConversion], // Assuming a box shape for simplicity
+              });
+          }
+          return bodies;
+      };
+
+      window.applyImpulses = function(inputs, impulsesToApply) {
+          for (const impulseData of impulsesToApply) {
+              const { bodyIndex, impulse, angularImpulse } = impulseData;
+
+              if (!bodyIds[bodyIndex]) continue;
+              
+              const bodyId = bodyIds[bodyIndex];
+              b2Body_ApplyLinearImpulseToCenter(bodyId, v.Set(impulse.x, impulse.y), true);
+              b2Body_ApplyAngularImpulse(bodyId, angularImpulse, true);
+
+              console.log(angularImpulse, bodyId);
+          }
+      };
+
+      loop(window.performance.now());
+  </script>
   </main>
   <div id="loadingContainer"  style="display:flex; justify-content:center; align-items:center; flex-direction:column; height:100%">
     <img id="loadingAnimation" src="/data/SEED_inverted.png" style="width:380px"/>

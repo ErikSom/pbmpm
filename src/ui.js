@@ -55,6 +55,9 @@ export function windowResize()
         g_canvas.height = wantedHeight;
     }
 
+    g_canvas.width = 800;
+    g_canvas.height = 600;
+
     g_vectorCanvas.width = g_canvas.width;
     g_vectorCanvas.height = g_canvas.height;
 

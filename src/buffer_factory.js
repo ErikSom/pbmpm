@@ -254,6 +254,57 @@ export class BufferFactory
 
         return storageBuffer;
     }
+    constructCPUArray(elements)
+    {
+        console.assert(this.compiled);
+        console.assert(Array.isArray(elements));
+
+        const elementCount = elements.length;
+        const cpuValues = new Float32Array(this.totalCount * elementCount);
+
+        for(var i = 0; i < elementCount; ++i)
+        {
+            const outputOffset = i * this.totalCount;
+
+            for(const elem of this.elements)
+            {
+                let value = undefined;
+                if(elem.name in elements[i])
+                {
+                    value = elements[i][elem.name];
+                }
+
+                if(value === undefined)
+                {
+                    continue;
+                }
+    
+                if(elem.type == u32)
+                {
+                    const castArray = new Int32Array(1);
+                    castArray.set([value], 0);
+                    const castArrayFloat = new Float32Array(castArray.buffer);
+                    cpuValues.set(castArrayFloat, outputOffset + elem.offset); 
+                }
+                else if(elem.type == vec2u)
+                {
+                    const castArray = new Int32Array(2);
+                    castArray.set(value, 0);
+                    const castArrayFloat = new Float32Array(castArray.buffer);
+                    cpuValues.set(castArrayFloat, outputOffset + elem.offset);
+                }
+                else if(elem.type == f32)
+                {
+                    cpuValues.set([value], outputOffset + elem.offset);
+                }
+                else
+                {
+                    cpuValues.set(value, outputOffset + elem.offset);
+                }
+            }
+        }
+        return cpuValues;
+    }
 }
 
 // What should the size of each type be in multiples of the size of

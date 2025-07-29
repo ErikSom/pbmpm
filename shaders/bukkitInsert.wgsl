@@ -10,7 +10,7 @@
 @group(0) @binding(0) var<uniform> g_simConstants : SimConstants;
 @group(0) @binding(1) var<storage> g_particleCount : array<u32>;
 @group(0) @binding(2) var<storage, read_write> g_particleInsertCounters : array<atomic<u32>>;
-@group(0) @binding(3) var<storage> g_particles : array<ParticleWrite>;
+@group(0) @binding(3) var<storage> g_particles : array<Particle>;
 @group(0) @binding(4) var<storage, read_write> g_particleData : array<u32>;
 @group(0) @binding(5) var<storage> g_bukkitIndexStart : array<u32>;
 
