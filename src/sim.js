@@ -106,6 +106,7 @@ export function init(insertHandlers)
     shapeFactory.add('emissionSpeed', buffer_factory.f32);
     shapeFactory.add('padding', buffer_factory.f32);
     shapeFactory.compile();
+    console.log(shapeFactory.getShaderText());
 
 
     const rigidBodyFactory = new buffer_factory.BufferFactory('RigidBody', buffer_factory.Storage);
@@ -240,57 +241,6 @@ export function update(gpuContext, inputs)
         bukkitizeParticles(gpuContext, simUniformBuffer, bukkitSystem);
 
         g_substepIndex = (g_substepIndex + 1);
-    }
-}
-
-async function applyForcesToBodies(gpuContext, inputs, bodyData) {
-    if (!bodyData || bodyData.length === 0) {
-        return;
-    }
-
-    const stagingBuffer = gpuContext.forceResultsStagingBuffer;
-
-    // This is the key to an efficient, non-stalling pipeline.
-    // We request to map the buffer from the PREVIOUS frame.
-    try {
-        await stagingBuffer.mapAsync(GPUMapMode.READ);
-        
-        // The data was written as integers, so we read it back as an Int32Array.
-        const resultsArray = new Int32Array(stagingBuffer.getMappedRange());
-        
-        const fixedPointMultiplier = Math.ceil(Math.pow(10, inputs.fixedPointMultiplierExponent));
-        const forcesToApply = [];
-
-        for (let i = 0; i < bodyData.length; i++) {
-            const offset = i * 4; // Each result is 4 ints: fx, fy, torque, padding
-
-            // Decode the fixed-point integers back into floating-point numbers.
-            const force = {
-                x: resultsArray[offset + 0] / fixedPointMultiplier,
-                y: resultsArray[offset + 1] / fixedPointMultiplier,
-            };
-            const torque = resultsArray[offset + 2] / fixedPointMultiplier;
-            
-            forcesToApply.push({ force, torque });
-        }
-
-        // This is the placeholder function you will create to talk to Box2D.
-        if (window.applyForces) {
-            window.applyForces(forcesToApply);
-        }
-
-
-        forcesToApply.forEach((forceData, index) => {
-            if(forceData.force.x === 0 && forceData.force.y === 0 && forceData.torque === 0)
-            {
-                return;
-            }
-            console.log(`Applying force to body ${index}:`, forceData.force, "Torque:", forceData.torque);
-        });
-    } catch (e) {
-        console.error("Error reading back forces:", e);
-    } finally {
-        stagingBuffer.unmap();
     }
 }
 

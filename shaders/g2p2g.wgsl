@@ -102,56 +102,6 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
             }
         }
 
-
-        // Dynamic rigid bodies (with velocity added)
-        // let bodyCount = arrayLength(&g_rigidBodies);
-        // for(var bodyIndex = 0u; bodyIndex < bodyCount; bodyIndex++)
-        // {
-        //     let body = g_rigidBodies[bodyIndex];
-        //     let bodyShape = SimShape(
-        //         body.position, body.halfSize, 0.0, body.rotation * 180.0 / 3.14159,
-        //         ShapeFunctionCollider, ShapeTypeBox, 0.0, 0.0, 0.0, 0.0
-        //     );
-
-        //     let displacedGridPosition = gridPosition + gridDisplacement;
-        //     let collideResult = collide(bodyShape, displacedGridPosition);
-
-        //     if(collideResult.collides)
-        //     {
-        //         // Use the stable static logic as a base
-        //         let gap = min(0.0, dot(collideResult.normal, collideResult.pointOnCollider - gridPosition));
-        //         var penetration = dot(collideResult.normal, gridDisplacement) - gap;
-
-        //         // Account for the body's own motion (linear + angular)
-        //         let r = gridPosition - body.position;
-        //         let tangentialVelocity = vec2f(-body.angularVelocity * r.y, body.angularVelocity * r.x);
-        //         let totalBodyVelocity = body.linearVelocity + tangentialVelocity;
-        //         let bodyDisplacement = totalBodyVelocity * g_simConstants.deltaTime;
-        //         penetration -= dot(collideResult.normal, bodyDisplacement);
-
-        //         let radialImpulse = max(penetration, 0.0);
-
-        //         // Calculate and accumulate forces if there is an impulse
-        //         if (radialImpulse > 0.0 && w > 1e-6) {
-        //             let force = w * radialImpulse * collideResult.normal / (g_simConstants.deltaTime * g_simConstants.deltaTime);
-        //             let torque = r.x * force.y - r.y * force.x;
-
-        //             let i_force = vec2i(
-        //                 encodeFixedPoint(force.x, g_simConstants.fixedPointMultiplier),
-        //                 encodeFixedPoint(force.y, g_simConstants.fixedPointMultiplier)
-        //             );
-        //             let i_torque = encodeFixedPoint(torque, g_simConstants.fixedPointMultiplier);
-        //             let resultsIndex = bodyIndex * 4u;
-
-        //             atomicAdd(&g_forceResults[resultsIndex + 0u], i_force.x);
-        //             atomicAdd(&g_forceResults[resultsIndex + 1u], i_force.y);
-        //             atomicAdd(&g_forceResults[resultsIndex + 2u], i_torque);
-        //         }
-
-        //         gridDisplacement -= radialImpulse * collideResult.normal;
-        //     }
-        // }
-
         // Collision detection against guardian shape
 
         // Grid vertices near or inside the guardian region should have their displacement values
@@ -404,50 +354,47 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                     }
                 }
 
-                // Handle Rigid Bodies
-// Handle Rigid Body Interaction (Action-Reaction Model)
-let bodyCount = arrayLength(&g_rigidBodies);
-for (var bodyIndex = 0u; bodyIndex < bodyCount; bodyIndex++)
-{
-    let body = g_rigidBodies[bodyIndex];
-    let bodyShape = SimShape(
-        body.position, body.halfSize, 0.0, body.rotation * 180.0 / 3.14159,
-        ShapeFunctionCollider, ShapeTypeBox, 0.0, 0.0, 0.0, 0.0
-    );
+                // Handle Rigid Body Interaction (Action-Reaction Model)
+                let bodyCount = arrayLength(&g_rigidBodies);
+                for (var bodyIndex = 0u; bodyIndex < bodyCount; bodyIndex++)
+                {
+                    let body = g_rigidBodies[bodyIndex];
+                    let bodyShape = SimShape(
+                        body.position, body.halfSize, 0.0, body.rotation * 180.0 / 3.14159,
+                        ShapeFunctionCollider, ShapeTypeBox, 0.0, 0.0, 0.0
+                    );
 
-    let collideResult = collide(bodyShape, particle.position);
+                    let collideResult = collide(bodyShape, particle.position);
 
-    // Check for actual penetration to calculate forces.
-    if (collideResult.collides && collideResult.penetration > 0.0)
-    {
-        let clampedPenetration = min(collideResult.penetration, 0.5);
+                    // Check for actual penetration to calculate forces.
+                    if (collideResult.collides && collideResult.penetration > 0.0)
+                    {
+                        let clampedPenetration = min(collideResult.penetration, 0.5);
 
-        // ✅ Calculate impulse (J ≈ -m * v_correction) instead of force.
-        // v_correction to resolve penetration is (penetration * normal) / dt.
-        // J = m * v_correction = m * penetration * normal / dt.
-        let impulseOnBody = particle.mass * clampedPenetration * collideResult.normal / g_simConstants.deltaTime;
+                        // calculate impulse (J ≈ -m * v_correction).
+                        // v_correction to resolve penetration is (penetration * normal) / dt.
+                        // J = m * v_correction = m * penetration * normal / dt.
+                        let impulseOnBody = particle.mass * clampedPenetration * collideResult.normal / g_simConstants.deltaTime;
 
-        // Calculate angular impulse (L = r x J)
-        let r = collideResult.pointOnCollider - body.position;
-        let angularImpulseOnBody = r.x * impulseOnBody.y - r.y * impulseOnBody.x;
+                        // calculate angular impulse (L = r x J)
+                        let r = collideResult.pointOnCollider - body.position;
+                        let angularImpulseOnBody = r.x * impulseOnBody.y - r.y * impulseOnBody.x;
 
-        // Rename variables for clarity (optional, but good practice).
-        // Let's reuse forceMultiplier as impulseMultiplier.
-        let impulseMultiplier = 1000.0; 
-        let i_impulse = vec2i(
-            encodeFixedPoint(impulseOnBody.x, u32(impulseMultiplier)),
-            encodeFixedPoint(impulseOnBody.y, u32(impulseMultiplier))
-        );
-        let i_angularImpulse = encodeFixedPoint(angularImpulseOnBody, u32(impulseMultiplier));
-        
-        let resultsIndex = bodyIndex * 4u;
-        atomicAdd(&g_forceResults[resultsIndex + 0u], i_impulse.x);
-        atomicAdd(&g_forceResults[resultsIndex + 1u], i_impulse.y);
-        atomicAdd(&g_forceResults[resultsIndex + 2u], i_angularImpulse);
-        
-        particle.displacement -= clampedPenetration * collideResult.normal;
-    }
-}
+                        let impulseMultiplier = 1000.0; 
+                        let i_impulse = vec2i(
+                            encodeFixedPoint(impulseOnBody.x, u32(impulseMultiplier)),
+                            encodeFixedPoint(impulseOnBody.y, u32(impulseMultiplier))
+                        );
+                        let i_angularImpulse = encodeFixedPoint(angularImpulseOnBody, u32(impulseMultiplier));
+                        
+                        let resultsIndex = bodyIndex * 4u;
+                        atomicAdd(&g_forceResults[resultsIndex + 0u], i_impulse.x);
+                        atomicAdd(&g_forceResults[resultsIndex + 1u], i_impulse.y);
+                        atomicAdd(&g_forceResults[resultsIndex + 2u], i_angularImpulse);
+                        
+                        particle.displacement -= clampedPenetration * collideResult.normal;
+                    }
+                }
             }
 
             // Save particle

@@ -31,12 +31,18 @@ export class BufferFactory
     // Add a parameter with the given name and type.
     // The name is used as a key for binding data on the js side and
     // also in the generated wgsl code.
-    add(name, type)
+    add(name, type, count = 1)
     {
         console.assert(!this.compiled);
 
-        const requiredSlotCount = getSize(type);
-        const requiredAlignment = getAlignment(type);        
+        const isArray = count > 1;
+
+        const requiredAlignment = getAlignment(type); 
+
+        const elementSize = getSize(type);
+        const elementStride = Math.ceil(elementSize / requiredAlignment) * requiredAlignment;
+
+        const requiredSlotCount = elementStride * count;   
         
         let alignmentAdjustment = this.totalCount % requiredAlignment;        
         while(alignmentAdjustment !== 0)
@@ -52,7 +58,10 @@ export class BufferFactory
             type: type,
             value: undefined,
             offset: this.totalCount,
-            slotCount: requiredSlotCount
+            slotCount: requiredSlotCount,
+            elementStride: elementStride,
+            isArray: isArray,
+            count: count
         });
 
         this.totalCount += requiredSlotCount;
@@ -80,7 +89,14 @@ export class BufferFactory
         let shaderText = `struct ${this.name}\n{\n`
         for(const elem of this.elements)
         {
-            shaderText += `${elem.name}: ${elem.type},\n`;
+            // Don't generate shader code for padding helpers
+            if (elem.name.startsWith('padding')) continue;
+
+            if (elem.isArray) {
+                shaderText += `${elem.name}: array<${elem.type}, ${elem.count}>,\n`;
+            } else {
+                shaderText += `${elem.name}: ${elem.type},\n`;
+            }
         }
         shaderText += "};\n";
 
@@ -139,31 +155,57 @@ export class BufferFactory
                 continue;
             }
 
-            // If we need to write an integer type then we have to trick
-            // the data into the uniform values array using this mechanism.
-            if(elem.type == u32)
-            {
-                const castArray = new Int32Array(1);
-                castArray.set([elem.value], 0);
-                const castArrayFloat = new Float32Array(castArray.buffer);
-                uniformValues.set(castArrayFloat, elem.offset); 
-            }
-            else if(elem.type == vec2u)
-            {
-                const castArray = new Int32Array(2);
-                castArray.set(elem.value, 0);
-                const castArrayFloat = new Float32Array(castArray.buffer);
-                uniformValues.set(castArrayFloat, elem.offset);
-            }
-            else if(elem.type == f32)
-            {
-                // Float values can be written through an array
-                uniformValues.set([elem.value], elem.offset);
-            }
-            else
-            {
-                // Float vector values can be written directly
-                uniformValues.set(elem.value, elem.offset);
+            if (elem.isArray) {
+                const elementSize = getSize(elem.type); // Size of the base type (e.g., vec3f -> 3)
+                for (let i = 0; i < elem.count; ++i) {
+                    // The destination offset respects the stride (padding)
+                    const destOffset = elem.offset + i * elem.elementStride;
+                    // The source offset is tightly packed
+                    const sourceOffset = i * elementSize;
+                    const singleElementValue = elem.value.slice(sourceOffset, sourceOffset + elementSize);
+
+                    if (elem.type == u32) {
+                        const castArray = new Int32Array(1);
+                        castArray.set(singleElementValue, 0);
+                        const castArrayFloat = new Float32Array(castArray.buffer);
+                        uniformValues.set(castArrayFloat, destOffset);
+                    } else if (elem.type == vec2u) {
+                        const castArray = new Int32Array(2);
+                        castArray.set(singleElementValue, 0);
+                        const castArrayFloat = new Float32Array(castArray.buffer);
+                        uniformValues.set(castArrayFloat, destOffset);
+                    } else {
+                        // f32, vec2f, vec3f can be set directly
+                        uniformValues.set(singleElementValue, destOffset);
+                    }
+                }
+            } else {
+                // If we need to write an integer type then we have to trick
+                // the data into the uniform values array using this mechanism.
+                if(elem.type == u32)
+                {
+                    const castArray = new Int32Array(1);
+                    castArray.set([elem.value], 0);
+                    const castArrayFloat = new Float32Array(castArray.buffer);
+                    uniformValues.set(castArrayFloat, elem.offset); 
+                }
+                else if(elem.type == vec2u)
+                {
+                    const castArray = new Int32Array(2);
+                    castArray.set(elem.value, 0);
+                    const castArrayFloat = new Float32Array(castArray.buffer);
+                    uniformValues.set(castArrayFloat, elem.offset);
+                }
+                else if(elem.type == f32)
+                {
+                    // Float values can be written through an array
+                    uniformValues.set([elem.value], elem.offset);
+                }
+                else
+                {
+                    // Float vector values can be written directly
+                    uniformValues.set(elem.value, elem.offset);
+                }
             }
         }
 
@@ -192,6 +234,7 @@ export class BufferFactory
         for(var i = 0; i < elementCount; ++i)
         {
             const outputOffset = i*this.totalCount;
+            const currentElementData = elements[i];
 
             for(const elem of this.elements)
             {
@@ -216,36 +259,57 @@ export class BufferFactory
         
             for(const elem of this.elements)
             {
-                if(elem.value === undefined)
+                const value = currentElementData[elem.name];
+
+                if(value === undefined)
                 {
+                    if (elem.name.indexOf('padding') == -1) {
+                        throw `Element ${elem.name} has no value set for index ${i}.`;
+                    }
                     continue;
                 }
-    
-                // If we need to write an integer type then we have to trick
-                // the data into the uniform values array using this mechanism.
-                if(elem.type == u32)
-                {
-                    const castArray = new Int32Array(1);
-                    castArray.set([elem.value], 0);
-                    const castArrayFloat = new Float32Array(castArray.buffer);
-                    storageValues.set(castArrayFloat, outputOffset + elem.offset); 
-                }
-                else if(elem.type == vec2u)
-                {
-                    const castArray = new Int32Array(2);
-                    castArray.set(elem.value, 0);
-                    const castArrayFloat = new Float32Array(castArray.buffer);
-                    storageValues.set(castArrayFloat, outputOffset + elem.offset);
-                }
-                else if(elem.type == f32)
-                {
-                    // Float values can be written through an array
-                    storageValues.set([elem.value], outputOffset + elem.offset);
-                }
-                else
-                {
-                    // Float vector values can be written directly
-                    storageValues.set(elem.value, outputOffset + elem.offset);
+
+                // Handle array types
+                if (elem.isArray) {
+                    const elementSize = getSize(elem.type);
+                    for (let j = 0; j < elem.count; ++j) {
+                        const destOffset = outputOffset + elem.offset + j * elem.elementStride;
+                        const sourceOffset = j * elementSize;
+                        const singleElementValue = value.slice(sourceOffset, sourceOffset + elementSize);
+
+                        if (elem.type == u32) {
+                            const castArray = new Int32Array(1);
+                            castArray.set(singleElementValue, 0);
+                            const castArrayFloat = new Float32Array(castArray.buffer);
+                            storageValues.set(castArrayFloat, destOffset);
+                        } else if (elem.type == vec2u) {
+                            const castArray = new Int32Array(2);
+                            castArray.set(singleElementValue, 0);
+                            const castArrayFloat = new Float32Array(castArray.buffer);
+                            storageValues.set(castArrayFloat, destOffset);
+                        } else {
+                            storageValues.set(singleElementValue, destOffset);
+                        }
+                    }
+                } else {
+                    // If we need to write an integer type then we have to trick
+                    // the data into the uniform values array using this mechanism.
+                    const destOffset = outputOffset + elem.offset;
+                    if (elem.type == u32) {
+                        const castArray = new Int32Array(1);
+                        castArray.set([value], 0);
+                        const castArrayFloat = new Float32Array(castArray.buffer);
+                        storageValues.set(castArrayFloat, destOffset);
+                    } else if (elem.type == vec2u) {
+                        const castArray = new Int32Array(2);
+                        castArray.set(value, 0);
+                        const castArrayFloat = new Float32Array(castArray.buffer);
+                        storageValues.set(castArrayFloat, destOffset);
+                    } else if (elem.type == f32) {
+                        storageValues.set([value], destOffset);
+                    } else {
+                        storageValues.set(value, destOffset);
+                    }
                 }
             }
         }
@@ -254,6 +318,7 @@ export class BufferFactory
 
         return storageBuffer;
     }
+    
     constructCPUArray(elements)
     {
         console.assert(this.compiled);
@@ -265,41 +330,65 @@ export class BufferFactory
         for(var i = 0; i < elementCount; ++i)
         {
             const outputOffset = i * this.totalCount;
+            const currentElementData = elements[i];
 
             for(const elem of this.elements)
             {
-                let value = undefined;
-                if(elem.name in elements[i])
-                {
-                    value = elements[i][elem.name];
-                }
+                const value = currentElementData[elem.name];
 
                 if(value === undefined)
                 {
                     continue;
                 }
-    
-                if(elem.type == u32)
-                {
-                    const castArray = new Int32Array(1);
-                    castArray.set([value], 0);
-                    const castArrayFloat = new Float32Array(castArray.buffer);
-                    cpuValues.set(castArrayFloat, outputOffset + elem.offset); 
-                }
-                else if(elem.type == vec2u)
-                {
-                    const castArray = new Int32Array(2);
-                    castArray.set(value, 0);
-                    const castArrayFloat = new Float32Array(castArray.buffer);
-                    cpuValues.set(castArrayFloat, outputOffset + elem.offset);
-                }
-                else if(elem.type == f32)
-                {
-                    cpuValues.set([value], outputOffset + elem.offset);
-                }
-                else
-                {
-                    cpuValues.set(value, outputOffset + elem.offset);
+
+                // Handle array types
+                if (elem.isArray) {
+                    const elementSize = getSize(elem.type);
+                    for (let j = 0; j < elem.count; ++j) {
+                        const destOffset = outputOffset + elem.offset + j * elem.elementStride;
+                        const sourceOffset = j * elementSize;
+                        const singleElementValue = value.slice(sourceOffset, sourceOffset + elementSize);
+
+                        if (elem.type == u32) {
+                            const castArray = new Int32Array(1);
+                            castArray.set(singleElementValue, 0);
+                            const castArrayFloat = new Float32Array(castArray.buffer);
+                            cpuValues.set(castArrayFloat, destOffset);
+                        } else if (elem.type == vec2u) {
+                            const castArray = new Int32Array(2);
+                            castArray.set(singleElementValue, 0);
+                            const castArrayFloat = new Float32Array(castArray.buffer);
+                            cpuValues.set(castArrayFloat, destOffset);
+                        } else {
+                            cpuValues.set(singleElementValue, destOffset);
+                        }
+                    }
+                } 
+                // Handle scalar/vector types
+                else {
+                    const destOffset = outputOffset + elem.offset;
+                    if(elem.type == u32)
+                    {
+                        const castArray = new Int32Array(1);
+                        castArray.set([value], 0);
+                        const castArrayFloat = new Float32Array(castArray.buffer);
+                        cpuValues.set(castArrayFloat, destOffset); 
+                    }
+                    else if(elem.type == vec2u)
+                    {
+                        const castArray = new Int32Array(2);
+                        castArray.set(value, 0);
+                        const castArrayFloat = new Float32Array(castArray.buffer);
+                        cpuValues.set(castArrayFloat, destOffset);
+                    }
+                    else if(elem.type == f32)
+                    {
+                        cpuValues.set([value], destOffset);
+                    }
+                    else
+                    {
+                        cpuValues.set(value, destOffset);
+                    }
                 }
             }
         }
