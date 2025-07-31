@@ -433,7 +433,7 @@ for (var bodyIndex = 0u; bodyIndex < bodyCount; bodyIndex++)
 
         // Rename variables for clarity (optional, but good practice).
         // Let's reuse forceMultiplier as impulseMultiplier.
-        let impulseMultiplier = 1.0; 
+        let impulseMultiplier = 1000.0; 
         let i_impulse = vec2i(
             encodeFixedPoint(impulseOnBody.x, u32(impulseMultiplier)),
             encodeFixedPoint(impulseOnBody.y, u32(impulseMultiplier))

@@ -107,6 +107,9 @@
         b2Body_GetAngularVelocity,
         b2Body_ApplyLinearImpulseToCenter,
         b2Body_ApplyAngularImpulse,
+        b2DefaultRevoluteJointDef,
+        b2CreateRevoluteJoint,
+        b2MakeRoundedBox
       } = box2d;
 
       const worldDef = b2DefaultWorldDef();
@@ -152,40 +155,48 @@
       const bodyIds = [];
       const v = new b2Vec2();
 
-      function createPyramid(worldId, height, gap) {
-        const boxWidth = 2.0;
-        const boxHeight = 2.0;
 
-        for (let row = 0; row < height; row++) {
-            const boxesInRow = height - row;
+      let spinnerId;
 
-            const startX = -(boxesInRow - 1) * (boxWidth + gap) / 2 + boxWidth * boxesInRow / 2;
+      {
+        const bodyDef = b2DefaultBodyDef();
 
-            for (let i = 0; i < boxesInRow; i++) {
-                const bd = new b2DefaultBodyDef();
-                bd.type = b2BodyType.b2_dynamicBody;
+        const x = 800 / pixelToMeters / 2;
+        const y = 600 / pixelToMeters / 2;
 
-                const xPos = startX + i * (boxWidth + gap);
-                const yPos = (boxHeight + gap) * row + boxHeight;
-                bd.position = v.Set(xPos, yPos);
+        bodyDef.type = b2BodyType.b2_dynamicBody;
+        bodyDef.position.Set(x, -y);
+        bodyDef.enableSleep = false;
 
-                const bodyId = b2CreateBody(worldId, bd);
+        spinnerId = b2CreateBody( worldId, bodyDef );
 
-                bodyIds.push(bodyId);
+        const box = b2MakeRoundedBox( 0.4, 10.0, 0.2 );
+        const shapeDef = b2DefaultShapeDef();
+        shapeDef.friction = 0.0;
+        b2CreatePolygonShape( spinnerId, shapeDef, box );
 
-                const shapeDefDynamic = new b2DefaultShapeDef();
-                shapeDefDynamic.density = 1.0;
-                shapeDefDynamic.material.friction = 0.3;
+        const motorSpeed = 1.0;
+        const maxMotorTorque = 40000.0;
+        const jointDef = b2DefaultRevoluteJointDef();
+        jointDef.bodyIdA = groundId;
+        jointDef.bodyIdB = spinnerId;
+        jointDef.localAnchorA.Copy(bodyDef.position);
+        jointDef.enableMotor = false;
+        jointDef.motorSpeed = motorSpeed;
+        jointDef.maxMotorTorque = maxMotorTorque;
 
-                const box = b2MakeBox(boxWidth/2, boxHeight/2);
-                b2CreatePolygonShape(bodyId, shapeDefDynamic, box);
-            }
-        }
+        const m_revoluteJoint = b2CreateRevoluteJoint( worldId, jointDef );
+
+        bodyDef.delete();
+        box.delete();
+        shapeDef.delete();
+        jointDef.delete();
+
+        bodyIds.push(spinnerId);
       }
+        
 
-      const pyramidHeight = 2;
-      const boxGap = 0.1;
-      createPyramid(worldId, pyramidHeight, boxGap);
+
 
       function drawProfile(stepDuration, profile) {
         const hdScale = hdRendering ? (Math.min(window.devicePixelRatio || 1, 2) || 1) : 1;
@@ -287,8 +298,8 @@
               if (!bodyIds[bodyIndex]) continue;
               
               const bodyId = bodyIds[bodyIndex];
-              b2Body_ApplyLinearImpulseToCenter(bodyId, v.Set(impulse.x, impulse.y), true);
-              b2Body_ApplyAngularImpulse(bodyId, angularImpulse, true);
+              b2Body_ApplyLinearImpulseToCenter(bodyId, v.Set(impulse.x / 1000, impulse.y / 1000), true);
+              b2Body_ApplyAngularImpulse(bodyId, angularImpulse / -1000, true);
 
               console.log(angularImpulse, bodyId);
           }
