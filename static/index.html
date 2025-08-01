@@ -181,7 +181,7 @@
         jointDef.bodyIdA = groundId;
         jointDef.bodyIdB = spinnerId;
         jointDef.localAnchorA.Copy(bodyDef.position);
-        jointDef.enableMotor = false;
+        jointDef.enableMotor = true;
         jointDef.motorSpeed = motorSpeed;
         jointDef.maxMotorTorque = maxMotorTorque;
 
@@ -289,6 +289,101 @@
               });
           }
           return bodies;
+      }
+
+      window.getRigidBodyData = (inputs) => {
+        const {
+            b2Body_GetPosition,
+            b2Body_GetLinearVelocity,
+            b2Body_GetRotation,
+            b2Rot_GetAngle,
+            b2Body_GetMass,
+            b2Body_GetShapes,
+            b2Body_GetShapeCount,
+            b2Shape_GetType,
+            b2ShapeType,
+            b2Shape_GetCircle,
+            b2Shape_GetPolygon,
+        } = box2d;
+
+        // The two main arrays we will populate
+        const bodies = [];
+        const shapes = [];
+
+        // Conversion factor from Box2D meters to our simulation grid units
+        const renderToSimScale = 1.0 / inputs.simResDivisor;
+        const simConversion = pixelToMeters * renderToSimScale; // Assuming inputs.pixelToMeters exists
+
+        // A running counter for the start index of the next body's shapes
+        let currentShapeIndex = 0;
+
+        // --- Main loop over each rigid body ---
+        for (const bodyId of bodyIds) {
+            const shapePtrs = b2Body_GetShapes(bodyId, b2Body_GetShapeCount(bodyId));
+            const shapeCountForThisBody = shapePtrs.length;
+
+            for (const shapePtr of shapePtrs) {
+                const shapeType = b2Shape_GetType(shapePtr);
+
+                // cicle
+                if (shapeType.value === b2ShapeType.b2_circleShape.value) {
+                    const circle = b2Shape_GetCircle(shapePtr);
+                    const localPos = circle.position;
+
+                    shapes.push({
+                        position: [localPos.x * simConversion, localPos.y * simConversion],
+                        radius: circle.radius * simConversion,
+                        shape_type: 1,
+                        vertices: new Float32Array(16), // 8 vec2f, zero-filled
+                        vertex_count: 0,
+                    });
+                }
+                // polygon
+                else if (shapeType.value === b2ShapeType.b2_polygonShape.value) {
+                    const polygon = b2Shape_GetPolygon(shapePtr);
+                    const vertexCount = polygon.count;
+                    
+                    const gpuVertices = new Float32Array(16); 
+                    for (let i = 0; i < vertexCount; i++) {
+                        const vertex = polygon.GetVertex(i);
+                        gpuVertices[i * 2] = vertex.x * simConversion;
+                        gpuVertices[i * 2 + 1] = vertex.y * simConversion;
+                    }
+
+                    shapes.push({
+                        vertex_count: vertexCount,
+                        vertices: gpuVertices,
+                        shape_type: 0,
+                        position: [0, 0],
+                        radius: 0,
+                    });
+                }
+            }
+
+            // --- Now that all shapes for this body are processed, create the BodyDef ---
+            const pos = b2Body_GetPosition(bodyId);
+            const vel = b2Body_GetLinearVelocity(bodyId);
+            const mass = b2Body_GetMass(bodyId);
+
+            bodies.push({
+                mass: mass,
+                // Convert world position to sim coordinates
+                position: [pos.x * simConversion, inputs.gridSize[1] + (pos.y * simConversion)],
+                angle: -b2Rot_GetAngle(b2Body_GetRotation(bodyId)),
+                velocity: [vel.x * simConversion, -vel.y * simConversion],
+                // Link to the 'shapes' array
+                shape_start_index: currentShapeIndex,
+                shape_count: shapeCountForThisBody,
+            });
+
+            // Update the running index for the next body
+            currentShapeIndex += shapeCountForThisBody;
+        }
+
+        return {
+            bodies,
+            shapes
+        };
       };
 
       window.applyImpulses = function(inputs, impulsesToApply) {

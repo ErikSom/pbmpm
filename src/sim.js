@@ -9,6 +9,7 @@ import * as gpu from "./gpu.js"
 import * as buffer_factory from "./buffer_factory.js"
 import * as v from "./v.js"
 import {Shaders} from "./shader.js"
+import { RigidBodyBufferHandler } from "./rigidbody_factory.js";
 
 export const DispatchSizes = {
     ParticleDispatchSize: 64,
@@ -106,16 +107,37 @@ export function init(insertHandlers)
     shapeFactory.add('emissionSpeed', buffer_factory.f32);
     shapeFactory.add('padding', buffer_factory.f32);
     shapeFactory.compile();
-    console.log(shapeFactory.getShaderText());
 
+    // RigidBody
+    //   BodyDef
+    const bodyDefFactory = new buffer_factory.BufferFactory('BodyDef', buffer_factory.Storage);
+    bodyDefFactory.add('mass', buffer_factory.f32);
+    bodyDefFactory.add('position', buffer_factory.vec2f);
+    bodyDefFactory.add('angle', buffer_factory.f32);
+    bodyDefFactory.add('velocity', buffer_factory.vec2f);
+    bodyDefFactory.add('shape_start_index', buffer_factory.u32);
+    bodyDefFactory.add('shape_count', buffer_factory.u32);
+    bodyDefFactory.compile();
+    //   Shape
+    const rigidShapeFactory = new buffer_factory.BufferFactory('Shape', buffer_factory.Storage);
+    rigidShapeFactory.add('position', buffer_factory.vec2f);
+    rigidShapeFactory.add('vertices', buffer_factory.vec2f, 8);
+    rigidShapeFactory.add('vertex_count', buffer_factory.u32);
+    rigidShapeFactory.add('radius', buffer_factory.f32);
+    rigidShapeFactory.add('shape_type', buffer_factory.u32);
+    rigidShapeFactory.compile();
 
-    const rigidBodyFactory = new buffer_factory.BufferFactory('RigidBody', buffer_factory.Storage);
-    rigidBodyFactory.add('position', buffer_factory.vec2f);
-    rigidBodyFactory.add('linearVelocity', buffer_factory.vec2f);
-    rigidBodyFactory.add('rotation', buffer_factory.f32);
-    rigidBodyFactory.add('angularVelocity', buffer_factory.f32);
-    rigidBodyFactory.add('halfSize', buffer_factory.vec2f);
-    rigidBodyFactory.compile();
+    const MAX_BODIES = 256;
+    const MAX_SHAPES = 1024;
+
+    const rigidBodyFactory = new RigidBodyBufferHandler(
+        'RigidBody',
+        bodyDefFactory,
+        rigidShapeFactory,
+        MAX_BODIES,
+        MAX_SHAPES
+    );
+
 
     function enumInsertHandler(enumValues)
     {
@@ -176,12 +198,16 @@ export function update(gpuContext, inputs)
         g_substepIndex = 0;
     }
 
-    const bodyData = window.getBodyData ? window.getBodyData(inputs) : [];
+
+    const bodyData = window.getRigidBodyData ? window.getRigidBodyData(inputs) : {bodies: [], shapes: []};
+
+    console.log(bodyData, window.getBodyData(inputs));
 
     gpuContext.lastFrameInputs = inputs;
-    gpuContext.lastFrameBodyData = bodyData;
+    gpuContext.lastFrameRigidBodyData = bodyData
 
-    if (bodyData.length > 0) {
+    if (bodyData.bodies.length > 0) {
+        console.log("Updating rigid body data");
         const rigidBodyDataArray = g_rigidBodyFactory.constructCPUArray(bodyData);
         gpuContext.device.queue.writeBuffer(gpuContext.rigidBodiesBuffer, 0, rigidBodyDataArray);
     }

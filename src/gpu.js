@@ -173,7 +173,7 @@ export function endFrame()
     }
 
     if(canReadbackForces) {
-        readbackImpulses(context.lastFrameInputs, context.lastFrameBodyData);
+        readbackImpulses(context.lastFrameInputs, context.lastFrameRigidBodyData);
     }
 
     context.encoder = null;
