@@ -26,6 +26,7 @@ export class BufferFactory
         this.compiled = false;
         this.paddingCount = 0;
         this.totalCount = 0;
+        this.maxAlignment = 1;
     }
 
     // Add a parameter with the given name and type.
@@ -37,7 +38,9 @@ export class BufferFactory
 
         const isArray = count > 1;
 
-        const requiredAlignment = getAlignment(type); 
+        const requiredAlignment = getAlignment(type);
+
+        this.maxAlignment = Math.max(this.maxAlignment, requiredAlignment);
 
         const elementSize = getSize(type);
         const elementStride = Math.ceil(elementSize / requiredAlignment) * requiredAlignment;
@@ -71,13 +74,22 @@ export class BufferFactory
     compile()
     {
         console.assert(!this.compiled);
-        
+
+        // Add final padding so the struct's total size is a multiple of its largest member's alignment.
+        // This is crucial for arrays of structs in storage buffers.
+        const requiredPadding = (this.maxAlignment - (this.totalCount % this.maxAlignment)) % this.maxAlignment;
+        for (let i = 0; i < requiredPadding; i++) {
+            const padName = `padding${this.paddingCount++}`;
+            this.elements.push({ name: padName, type: f32, offset: this.totalCount++, isArray: false });
+        }
+       
         if(this.mode == Uniform)
         {
-            // Round up size to a multiple of 16
-            this.totalCount = Math.ceil(this.totalCount/16)*16;
+            // Round up uniform buffer size to a multiple of 16 bytes (4 words)
+            const alignment = 4;
+            this.totalCount = Math.ceil(this.totalCount/alignment)*alignment;
         }
-        
+       
         this.compiled = true;
     }
 

@@ -6,6 +6,7 @@
 
 import * as gpu from "./gpu.js"
 import * as buffer_factory from "./buffer_factory.js"
+import { RenderEnums } from "./sim.js";
 
 let g_renderFactory;
 
@@ -63,6 +64,7 @@ export function update(gpuContext, inputs)
         [
             renderUniformBuffer,
             gpuContext.particleBuffer,
+            gpuContext.rigidBodiesBuffer,
         ]
     );
 
@@ -77,6 +79,12 @@ export function update(gpuContext, inputs)
 
     renderPass.setPipeline(gpuContext.pipelines['particleRender']);
     renderPass.setBindGroup(0, renderingBindGroup);
-    renderPass.drawIndirect(gpuContext.particleRenderDispatchBuffer, 0);
+
+    if (parseInt(inputs.renderMode) === RenderEnums.RenderModeRigidBody) {
+        renderPass.draw(6, 1, 0, 0);
+    } else {
+        renderPass.drawIndirect(gpuContext.particleRenderDispatchBuffer, 0);
+    }
+
     renderPass.end();
 }

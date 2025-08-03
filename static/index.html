@@ -5,7 +5,7 @@
    <link rel="icon" type="image/x-icon" href="/data/SEED_Logo.png">
  </head>
 
- <body id="body" style="background-image:linear-gradient(217deg, rgb(1, 4, 30), rgb(10, 3, 1) 50%); margin:0; width: 100vw; height:100vh;">
+ <body id="body" style="background-image:linear-gradient(217deg, rgb(146, 146, 146), rgb(234, 234, 234) 50%); margin:0; width: 100vw; height:100vh;">
   <main id="main">
     <link rel="stylesheet" href="style.css">
     <canvas id='canvas' style="position:absolute;"></canvas>
@@ -170,7 +170,7 @@
 
         spinnerId = b2CreateBody( worldId, bodyDef );
 
-        const box = b2MakeRoundedBox( 0.4, 10.0, 0.2 );
+        const box = b2MakeBox( 0.6, 5.0);
         const shapeDef = b2DefaultShapeDef();
         shapeDef.friction = 0.0;
         b2CreatePolygonShape( spinnerId, shapeDef, box );
@@ -185,7 +185,7 @@
         jointDef.motorSpeed = motorSpeed;
         jointDef.maxMotorTorque = maxMotorTorque;
 
-        const m_revoluteJoint = b2CreateRevoluteJoint( worldId, jointDef );
+        // const m_revoluteJoint = b2CreateRevoluteJoint( worldId, jointDef );
 
         bodyDef.delete();
         box.delete();
@@ -251,22 +251,6 @@
           profile.delete();
       };
 
-      // This is an example; adapt it to your Box2D setup
-      // for (let body = box2dWorld.GetBodyList(); body; body = body.GetNext()) {
-      //     const pos = body.GetPosition();
-      //     const vel = body.GetLinearVelocity();
-      //     const fixture = body.GetFixtureList();
-      //     const shape = fixture.GetShape(); // Assuming box shapes for now
-      //
-      //     bodyData.push({
-      //         position: [pos.x, pos.y],
-      //         linearVelocity: [vel.x, vel.y],
-      //         rotation: body.GetAngle(),
-      //         angularVelocity: body.GetAngularVelocity(),
-      //         halfSize: [shape.m_vertices[1].x, shape.m_vertices[1].y] // Example for box
-      //     });
-      // }
-
       window.getBodyData = (inputs) => {
           const renderToSimScale = 1.0/inputs.simResDivisor;
           const simConversion = pixelToMeters * renderToSimScale;
@@ -317,7 +301,6 @@
         // A running counter for the start index of the next body's shapes
         let currentShapeIndex = 0;
 
-        // --- Main loop over each rigid body ---
         for (const bodyId of bodyIds) {
             const shapePtrs = b2Body_GetShapes(bodyId, b2Body_GetShapeCount(bodyId));
             const shapeCountForThisBody = shapePtrs.length;
@@ -333,47 +316,94 @@
                     shapes.push({
                         position: [localPos.x * simConversion, localPos.y * simConversion],
                         radius: circle.radius * simConversion,
-                        shape_type: 1,
+                        shapeType: shapeType.value,
                         vertices: new Float32Array(16), // 8 vec2f, zero-filled
-                        vertex_count: 0,
+                        vertexCount: 0,
                     });
                 }
                 // polygon
                 else if (shapeType.value === b2ShapeType.b2_polygonShape.value) {
-                    const polygon = b2Shape_GetPolygon(shapePtr);
-                    const vertexCount = polygon.count;
-                    
-                    const gpuVertices = new Float32Array(16); 
-                    for (let i = 0; i < vertexCount; i++) {
-                        const vertex = polygon.GetVertex(i);
-                        gpuVertices[i * 2] = vertex.x * simConversion;
-                        gpuVertices[i * 2 + 1] = vertex.y * simConversion;
-                    }
+                  const polygon = b2Shape_GetPolygon(shapePtr);
+                  const vertexCount = polygon.count;
+                  
+                  const gpuVerts = new Float32Array(16);
+                  const gpuNormals = new Float32Array(16);
+                  const gpuPlanes = new Float32Array(8);
+                  
+                  for (let i = 0; i < vertexCount; i++) {
+                      const vertex = polygon.GetVertex(i);
+                      gpuVerts[i * 2] = vertex.x * simConversion;
+                      gpuVerts[i * 2 + 1] = vertex.y * simConversion;
+                  }
 
-                    shapes.push({
-                        vertex_count: vertexCount,
-                        vertices: gpuVertices,
-                        shape_type: 0,
-                        position: [0, 0],
-                        radius: 0,
-                    });
+                  // Calculate edge normals and plane constants for the SAT-based collision checks on the GPU.
+                  for (let i = 0; i < vertexCount; i++) {
+                      const p1_x = gpuVerts[i * 2];
+                      const p1_y = gpuVerts[i * 2 + 1];
+
+                      const next_i = (i + 1) % vertexCount;
+                      const p2_x = gpuVerts[next_i * 2];
+                      const p2_y = gpuVerts[next_i * 2 + 1];
+
+                      const edge_x = p2_x - p1_x;
+                      const edge_y = p2_y - p1_y;
+
+                      let normal_x = edge_y;
+                      let normal_y = -edge_x;
+
+                      const len = Math.sqrt(normal_x * normal_x + normal_y * normal_y);
+                      if (len > 0) {
+                          normal_x /= len;
+                          normal_y /= len;
+                      }
+
+                      gpuNormals[i * 2] = normal_x;
+                      gpuNormals[i * 2 + 1] = normal_y;
+
+                      gpuPlanes[i] = p1_x * normal_x + p1_y * normal_y;
+                  }
+
+                  
+                  let maxDistSq = 0;
+                  for (let i = 0; i < vertexCount; i++) {
+                      const vx = gpuVerts[i * 2];
+                      const vy = gpuVerts[i * 2 + 1];
+                      const distSq = vx * vx + vy * vy;
+                      if (distSq > maxDistSq) {
+                          maxDistSq = distSq;
+                      }
+                  }
+                  const boundRadius = Math.sqrt(maxDistSq);
+
+                  shapes.push({
+                      position: [0, 0],
+                      shapeType: shapeType.value,
+
+                      boundRadius: boundRadius,
+                      polyCount: vertexCount,
+                      polyVerts: gpuVerts,
+                      polyNormals: gpuNormals,
+                      polyPlane: gpuPlanes,
+
+                      radius: 0,
+                  });
                 }
             }
 
-            // --- Now that all shapes for this body are processed, create the BodyDef ---
             const pos = b2Body_GetPosition(bodyId);
             const vel = b2Body_GetLinearVelocity(bodyId);
+            const angular = b2Body_GetAngularVelocity(bodyId);
             const mass = b2Body_GetMass(bodyId);
 
             bodies.push({
                 mass: mass,
-                // Convert world position to sim coordinates
                 position: [pos.x * simConversion, inputs.gridSize[1] + (pos.y * simConversion)],
-                angle: -b2Rot_GetAngle(b2Body_GetRotation(bodyId)),
+                angle: b2Rot_GetAngle(b2Body_GetRotation(bodyId)),
                 velocity: [vel.x * simConversion, -vel.y * simConversion],
-                // Link to the 'shapes' array
-                shape_start_index: currentShapeIndex,
-                shape_count: shapeCountForThisBody,
+                angularVelocity: angular,
+                // link to the 'shapes' array
+                shapeStartIndex: currentShapeIndex,
+                shapeCount: shapeCountForThisBody,
             });
 
             // Update the running index for the next body
@@ -394,9 +424,7 @@
               
               const bodyId = bodyIds[bodyIndex];
               b2Body_ApplyLinearImpulseToCenter(bodyId, v.Set(impulse.x / 1000, impulse.y / 1000), true);
-              b2Body_ApplyAngularImpulse(bodyId, angularImpulse / -1000, true);
-
-              console.log(angularImpulse, bodyId);
+              b2Body_ApplyAngularImpulse(bodyId, angularImpulse / 1000, true);
           }
       };
 

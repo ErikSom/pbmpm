@@ -511,7 +511,7 @@ function readbackImpulses(inputs, bodyData) {
             try { staging.unmap(); } catch {}
 
             // Now, safely process the data we copied (CPU-side).
-            if (!inputs || !bodyData) {
+            if (!inputs || !bodyData?.bodies) {
                 console.warn("Skipping impulse application due to missing inputs/bodyData for this frame.");
                 return;
             }
@@ -520,7 +520,7 @@ function readbackImpulses(inputs, bodyData) {
             const impulseMultiplier = 1000.0;
             const wordsPerBody = 4; // ix, iy, angular_impulse, padding
             const maxBodiesFromBuffer = Math.floor(dataCopy.length / wordsPerBody);
-            const bodyCount = Math.min(bodyData.length, maxBodiesFromBuffer);
+            const bodyCount = Math.min(bodyData.bodies.length, maxBodiesFromBuffer);
 
             const impulsesToApply = [];
 

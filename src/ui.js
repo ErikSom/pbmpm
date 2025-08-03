@@ -150,7 +150,8 @@ const g_uiElements =
     {type: Combo, name: 'renderMode', desc: 'Render Mode', values:[
         {value: RenderEnums.RenderModeStandard, desc: 'Standard'},
         {value: RenderEnums.RenderModeCompression, desc:'Compression'},
-        {value: RenderEnums.RenderModeVelocity, desc: 'Velocity'}
+        {value: RenderEnums.RenderModeVelocity, desc: 'Velocity'},
+        {value: RenderEnums.RenderModeRigidBody, desc: 'Rigid Body'}
     ]},
 ]
 

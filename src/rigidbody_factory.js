@@ -9,7 +9,7 @@ export class RigidBodyBufferHandler {
         this.bodyStrideBytes = bodyDefFactory.getTotalSizeInWords() * 4;
         this.shapeStrideBytes = shapeFactory.getTotalSizeInWords() * 4;
 
-        this.headerSizeBytes = 16; // 4 words * 4 bytes/word (for body_count, shape_count, padding)
+        this.headerSizeBytes = 16; // 4 words * 4 bytes/word (for body_count, shapeCount, padding)
         this.bodiesOffsetBytes = this.headerSizeBytes;
         this.shapesOffsetBytes = this.bodiesOffsetBytes + (this.bodyStrideBytes * this.maxBodies);
         this.totalSizeInBytes = this.shapesOffsetBytes + (this.shapeStrideBytes * this.maxShapes);
@@ -28,7 +28,7 @@ const MAX_SHAPES = ${this.maxShapes}u;
 
 struct ${this.name} {
     body_count: u32,
-    shape_count: u32,
+    shapeCount: u32,
     padding: vec2f,
     bodies: array<BodyDef, MAX_BODIES>,
     shapes: array<Shape, MAX_SHAPES>,

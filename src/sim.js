@@ -34,6 +34,13 @@ export const SimEnums = {
     ShapeTypeBox: 0,
     ShapeTypeCircle: 1,
 
+    // box2d shapes
+    B2CircleShape: 0,
+    B2CapsuleShape: 1,
+    B2SegmentShape: 2,
+    B2PolygonShape: 3,
+    B2ChainSegmentShape: 4,
+
     ShapeFunctionEmit: 0,
     ShapeFunctionCollider: 1,
     ShapeFunctionDrain: 2,
@@ -45,6 +52,7 @@ export const RenderEnums = {
     RenderModeStandard: 0,
     RenderModeCompression: 1,
     RenderModeVelocity: 2,
+    RenderModeRigidBody: 3,
 };
 
 let g_simFactory;
@@ -115,16 +123,21 @@ export function init(insertHandlers)
     bodyDefFactory.add('position', buffer_factory.vec2f);
     bodyDefFactory.add('angle', buffer_factory.f32);
     bodyDefFactory.add('velocity', buffer_factory.vec2f);
-    bodyDefFactory.add('shape_start_index', buffer_factory.u32);
-    bodyDefFactory.add('shape_count', buffer_factory.u32);
+    bodyDefFactory.add('angularVelocity', buffer_factory.f32);
+    bodyDefFactory.add('shapeStartIndex', buffer_factory.f32);
+    bodyDefFactory.add('shapeCount', buffer_factory.f32);
     bodyDefFactory.compile();
     //   Shape
     const rigidShapeFactory = new buffer_factory.BufferFactory('Shape', buffer_factory.Storage);
     rigidShapeFactory.add('position', buffer_factory.vec2f);
-    rigidShapeFactory.add('vertices', buffer_factory.vec2f, 8);
-    rigidShapeFactory.add('vertex_count', buffer_factory.u32);
     rigidShapeFactory.add('radius', buffer_factory.f32);
-    rigidShapeFactory.add('shape_type', buffer_factory.u32);
+    rigidShapeFactory.add('shapeType', buffer_factory.f32);
+    rigidShapeFactory.add('boundRadius', buffer_factory.f32);
+    rigidShapeFactory.add('polyCount', buffer_factory.f32);
+    rigidShapeFactory.add('polyVerts', buffer_factory.vec2f, 8);
+    rigidShapeFactory.add('polyNormals', buffer_factory.vec2f, 8);
+    rigidShapeFactory.add('polyPlane', buffer_factory.f32, 8);
+
     rigidShapeFactory.compile();
 
     const MAX_BODIES = 256;
@@ -201,13 +214,10 @@ export function update(gpuContext, inputs)
 
     const bodyData = window.getRigidBodyData ? window.getRigidBodyData(inputs) : {bodies: [], shapes: []};
 
-    console.log(bodyData, window.getBodyData(inputs));
-
     gpuContext.lastFrameInputs = inputs;
     gpuContext.lastFrameRigidBodyData = bodyData
 
     if (bodyData.bodies.length > 0) {
-        console.log("Updating rigid body data");
         const rigidBodyDataArray = g_rigidBodyFactory.constructCPUArray(bodyData);
         gpuContext.device.queue.writeBuffer(gpuContext.rigidBodiesBuffer, 0, rigidBodyDataArray);
     }

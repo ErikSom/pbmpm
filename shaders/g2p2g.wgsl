@@ -7,8 +7,7 @@
 //!include bukkit.inc
 //!include particle.inc
 //!include shapes.inc
-
-//!insert RigidBody
+//!include rigidbody.inc
 
 @group(0) @binding(0) var<uniform> g_simConstants : SimConstants;
 @group(0) @binding(1) var<storage, read_write> g_particles : array<Particle>;
@@ -355,52 +354,40 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                 }
 
                 // Handle Rigid Body Interaction (Action-Reaction Model)
-                // Placeholder to prevent stripping
-                // if (g_rigidBodies.body_count > 5u) {
-                //     // Read from the actual array data, not just the header.
-                //     // This forces the compiler to acknowledge the 'bodies' array.
-                //     let keep_alive = g_rigidBodies.bodies[0].mass * 1.0;
-                //     particle.displacement.x += keep_alive;
-                //     atomicAdd(&g_forceResults[0], 1);
-                // }
-
-                if (g_rigidBodies.body_count <= 0u) {
-                    particle.color = vec3f(1.0, 0.0, 0.0);
-                }
-
-                // Handle Rigid Body Interaction (Action-Reaction Model)
                 for (var bodyIndex = 0u; bodyIndex < g_rigidBodies.body_count; bodyIndex = bodyIndex + 1u)
                 {
                     let body = g_rigidBodies.bodies[bodyIndex];
 
                     // Loop through all shapes attached to this body
-                    for (var i = 0u; i < body.shape_count; i = i + 1u)
+                    for (var i = 0.0; i < body.shapeCount; i = i + 1.0)
                     {
-                        let shapeIndex = body.shape_start_index + i;
+                        let shapeIndex = u32(body.shapeStartIndex + i);
                         let localShape = g_rigidBodies.shapes[shapeIndex];
 
-                        let R_body = rot(body.angle);
-                        let worldShapePos = body.position + R_body * localShape.position;
+                        // let R_body = rot(body.angle);
+                        // let worldShapePos = body.position + R_body * localShape.position;
 
                         // For this test, we derive halfSize from the first vertex of a polygon.
                         // For circles, it's zero.
-                        let halfSizeFromVerts = vec2f(4, 4);
+                        // let halfSizeFromVerts = vec2f(4, 4);
 
-                        let worldShape = SimShape(
-                            worldShapePos,
-                            select(halfSizeFromVerts, vec2f(0.0), localShape.shape_type == ShapeTypeCircle),
-                            localShape.radius,
-                            body.angle * 180.0 / 3.14159, // The old collide function used degrees
-                            ShapeFunctionCollider,
-                            ShapeTypeBox,
-                            0.0, // emitMaterial
-                            0.0, // emissionRate
-                            0.0  // emissionSpeed
-                        );
+                        // let worldShape = SimShape(
+                        //     worldShapePos,
+                        //     halfSizeFromVerts,
+                        //     localShape.radius,
+                        //     body.angle * 180.0 / 3.14159, // The old collide function used degrees
+                        //     ShapeFunctionCollider,
+                        //     ShapeTypeBox,
+                        //     0.0, // emitMaterial
+                        //     0.0, // emissionRate
+                        //     0.0  // emissionSpeed
+                        // );
 
-                        // --- End of SimShape construction ---
 
-                        let collideResult = collide(worldShape, particle.position);
+                        // fn RBcollide(shape: Shape, body_pos: vec2f, body_rot: f32, query_pos: vec2f) -> RBCollideResult
+
+
+                        let collideResult = RBcollide(localShape, body.position, body.angle, particle.position);
 
                         // Check for actual penetration to calculate forces
                         if (collideResult.collides && collideResult.penetration > 0.0)
