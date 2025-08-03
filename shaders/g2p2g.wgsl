@@ -364,29 +364,6 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                         let shapeIndex = u32(body.shapeStartIndex + i);
                         let localShape = g_rigidBodies.shapes[shapeIndex];
 
-                        // let R_body = rot(body.angle);
-                        // let worldShapePos = body.position + R_body * localShape.position;
-
-                        // For this test, we derive halfSize from the first vertex of a polygon.
-                        // For circles, it's zero.
-                        // let halfSizeFromVerts = vec2f(4, 4);
-
-                        // let worldShape = SimShape(
-                        //     worldShapePos,
-                        //     halfSizeFromVerts,
-                        //     localShape.radius,
-                        //     body.angle * 180.0 / 3.14159, // The old collide function used degrees
-                        //     ShapeFunctionCollider,
-                        //     ShapeTypeBox,
-                        //     0.0, // emitMaterial
-                        //     0.0, // emissionRate
-                        //     0.0  // emissionSpeed
-                        // );
-
-
-                        // fn RBcollide(shape: Shape, body_pos: vec2f, body_rot: f32, query_pos: vec2f) -> RBCollideResult
-
-
                         let collideResult = RBcollide(localShape, body.position, body.angle, particle.position);
 
                         // Check for actual penetration to calculate forces
