@@ -167,6 +167,7 @@
         bodyDef.type = b2BodyType.b2_dynamicBody;
         bodyDef.position.Set(x, -y);
         bodyDef.enableSleep = false;
+        bodyDef.angularDamping = 2.0;
 
         spinnerId = b2CreateBody( worldId, bodyDef );
 
@@ -175,7 +176,7 @@
         shapeDef.friction = 0.0;
         b2CreatePolygonShape( spinnerId, shapeDef, box );
 
-        const motorSpeed = 1.0;
+        const motorSpeed = 5.0;
         const maxMotorTorque = 40000.0;
         const jointDef = b2DefaultRevoluteJointDef();
         jointDef.bodyIdA = groundId;
@@ -399,7 +400,7 @@
                 mass: mass,
                 position: [pos.x * simConversion, inputs.gridSize[1] + (pos.y * simConversion)],
                 angle: b2Rot_GetAngle(b2Body_GetRotation(bodyId)),
-                velocity: [vel.x * simConversion, -vel.y * simConversion],
+                velocity: [vel.x * pixelToMeters, -vel.y * pixelToMeters],
                 angularVelocity: angular,
                 // link to the 'shapes' array
                 shapeStartIndex: currentShapeIndex,

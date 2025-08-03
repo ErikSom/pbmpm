@@ -67,6 +67,7 @@ export function init(insertHandlers)
     const simFactory = new buffer_factory.BufferFactory('SimConstants', buffer_factory.Uniform);
 
     simFactory.add('gridSize', buffer_factory.vec2u);
+    simFactory.add('simResDivisor', buffer_factory.f32);
     simFactory.add('deltaTime', buffer_factory.f32);
     simFactory.add('mouseActivation', buffer_factory.f32);
 
@@ -372,6 +373,7 @@ function constructSimUniformBuffer(gpuContext, inputs, bukkitSystem, iteration)
 
     // Update values that must be set directly
     const setDirectlyValues = {
+        simResDivisor: inputs.simResDivisor, // <-- ADD THIS LINE
         deltaTime: 1.0/inputs.simRate,
         mouseActivation: mouseActivation,
         mousePosition: mousePosition,
