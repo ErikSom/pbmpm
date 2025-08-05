@@ -133,18 +133,29 @@
       shapeDefSegment.density = 1.0;
       shapeDefSegment.material.friction = 0.3;
 
+      const ex = 800 / pixelToMeters;
+      const ey = 600 / pixelToMeters;
+      const padding = 32 / pixelToMeters; // padding for the ground segments
+
       {
         const segment = new b2Segment();
-        segment.point1 = new b2Vec2(0, -0);
-        segment.point2 = new b2Vec2(6, -7);
-
+        segment.point1 = new b2Vec2(padding, 0);
+        segment.point2 = new b2Vec2(padding, -ey + padding);
         b2CreateSegmentShape(groundId, shapeDefSegment, segment);
       }
 
       {
         const segment = new b2Segment();
-        segment.point1 = new b2Vec2(3, -18);
-        segment.point2 = new b2Vec2(22, -18)
+        segment.point1 = new b2Vec2(ex - padding, 0);
+        segment.point2 = new b2Vec2(ex - padding, -ey + padding);
+        b2CreateSegmentShape(groundId, shapeDefSegment, segment);
+      }
+
+      {
+
+        const segment = new b2Segment();
+        segment.point1 = new b2Vec2(0, -ey + padding);
+        segment.point2 = new b2Vec2(ex, -ey + padding);
         b2CreateSegmentShape(groundId, shapeDefSegment, segment);
       }
 
@@ -167,7 +178,6 @@
         bodyDef.type = b2BodyType.b2_dynamicBody;
         bodyDef.position.Set(x, -y);
         bodyDef.enableSleep = false;
-        bodyDef.angularDamping = 2.0;
 
         spinnerId = b2CreateBody( worldId, bodyDef );
 
@@ -177,7 +187,7 @@
         b2CreatePolygonShape( spinnerId, shapeDef, box );
 
         const motorSpeed = 5.0;
-        const maxMotorTorque = 40000.0;
+        const maxMotorTorque = 400000.0;
         const jointDef = b2DefaultRevoluteJointDef();
         jointDef.bodyIdA = groundId;
         jointDef.bodyIdB = spinnerId;
@@ -186,7 +196,7 @@
         jointDef.motorSpeed = motorSpeed;
         jointDef.maxMotorTorque = maxMotorTorque;
 
-        // const m_revoluteJoint = b2CreateRevoluteJoint( worldId, jointDef );
+        const m_revoluteJoint = b2CreateRevoluteJoint( worldId, jointDef );
 
         bodyDef.delete();
         box.delete();
@@ -195,7 +205,30 @@
 
         bodyIds.push(spinnerId);
       }
-        
+
+      // spawn random planks
+      {
+        const bodyDef = b2DefaultBodyDef();
+        bodyDef.type = b2BodyType.b2_dynamicBody;
+
+        const maxX = 800 / pixelToMeters;
+        const maxY = 600 / pixelToMeters;
+
+        for (let i = 0; i < 10; i++) {
+          const x = Math.random() * maxX;
+          const y = Math.random() * maxY;
+          bodyDef.position.Set(x, y);
+          bodyDef.angle = Math.random() * Math.PI * 2;
+          const plankId = b2CreateBody(worldId, bodyDef);
+          bodyIds.push(plankId);
+
+
+          const box = b2MakeBox( 0.5, 2);
+          const shapeDef = b2DefaultShapeDef();
+          shapeDef.friction = 0.3;
+          b2CreatePolygonShape( plankId, shapeDef, box );
+        }
+      }
 
 
 
@@ -251,30 +284,6 @@
           drawProfile(duration, profile);
           profile.delete();
       };
-
-      window.getBodyData = (inputs) => {
-          const renderToSimScale = 1.0/inputs.simResDivisor;
-          const simConversion = pixelToMeters * renderToSimScale;
-
-          const bodies = [];
-          for (let i = 0; i < bodyIds.length; i++) {
-              const bodyId = bodyIds[i];
-              const pos = b2Body_GetPosition(bodyId);
-              const vel = b2Body_GetLinearVelocity(bodyId);
-              const rotation = b2Rot_GetAngle(b2Body_GetRotation(bodyId));
-
-              const simPos = [pos.x * simConversion, inputs.gridSize[1] + pos.y * simConversion];
-              bodies.push({
-                  id: bodyId,
-                  position: simPos,
-                  linearVelocity: [vel.x * simConversion, vel.y * simConversion],
-                  rotation: rotation,
-                  angularVelocity: b2Body_GetAngularVelocity(bodyId),
-                  halfSize: [1 * simConversion, 1 * simConversion], // Assuming a box shape for simplicity
-              });
-          }
-          return bodies;
-      }
 
       window.getRigidBodyData = (inputs) => {
         const {
