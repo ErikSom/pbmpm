@@ -13,7 +13,7 @@ fn gridVertexIndex(gridVertex : vec2u, gridSize : vec2u) -> u32
 {
     // Currently using lexicographical ordering
     // 4 components per grid vertex
-    return u32(4*(gridVertex.y * gridSize.x + gridVertex.x));
+    return u32(8*(gridVertex.y * gridSize.x + gridVertex.x));
 }
 
 fn decodeFixedPoint(fixedPoint : i32, fixedPointMultiplier : u32) -> f32
