@@ -127,6 +127,7 @@ export function init(insertHandlers)
     bodyDefFactory.add('angularVelocity', buffer_factory.f32);
     bodyDefFactory.add('shapeStartIndex', buffer_factory.f32);
     bodyDefFactory.add('shapeCount', buffer_factory.f32);
+    bodyDefFactory.add('boundRadiusSq', buffer_factory.f32);
     bodyDefFactory.compile();
     //   Shape
     const rigidShapeFactory = new buffer_factory.BufferFactory('Shape', buffer_factory.Storage);

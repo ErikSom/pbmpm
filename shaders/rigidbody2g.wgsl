@@ -1,5 +1,7 @@
+// shaders/rigidbody2g.wgsl
+
 //-----------------------------------------------------------------------------
-// Copyright (c) 2024 Electronic Arts.  All rights reserved.
+// Copyright (c) 2024 Electronic Arts.  All rights reserved.
 //-----------------------------------------------------------------------------
 
 //!include matrix.inc
@@ -32,6 +34,18 @@ fn csMain(@builtin(global_invocation_id) id: vec3<u32>)
     for (var bodyIndex = 0u; bodyIndex < g_rigidBodies.body_count; bodyIndex++)
     {
         let body = g_rigidBodies.bodies[bodyIndex];
+        
+        // --- PERFORMANCE OPTIMIZATION: BROAD-PHASE CULLING ---
+        // Calculate squared distance from grid point to body center.
+        let offset = body.position - gridPos;
+        let distSq = dot(offset, offset);
+
+        // If the distance is greater than the body's pre-calculated bounding radius,
+        // we can safely skip all of its shapes.
+        if (distSq > body.boundRadiusSq)
+        {
+            continue;
+        }
         
         for (var i = 0u; i < u32(body.shapeCount); i++)
         {

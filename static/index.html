@@ -285,10 +285,11 @@
           profile.delete();
       };
 
-            window.getRigidBodyData = (inputs) => {
+      window.getRigidBodyData = (inputs) => {
         const {
             b2Body_GetPosition,
             b2Body_GetLinearVelocity,
+            b2Body_GetAngularVelocity,
             b2Body_GetRotation,
             b2Rot_GetAngle,
             b2Body_GetMass,
@@ -300,113 +301,106 @@
             b2Shape_GetPolygon,
         } = box2d;
 
-        // The two main arrays we will populate
         const bodies = [];
         const shapes = [];
 
-        // Conversion factor from Box2D meters to our simulation grid units
         const renderToSimScale = 1.0 / inputs.simResDivisor;
-        const simConversion = pixelToMeters * renderToSimScale; // Assuming inputs.pixelToMeters exists
+        // Assuming you have a global or passed-in `pixelToMeters`
+        const simConversion = pixelToMeters * renderToSimScale; 
 
-        // A running counter for the start index of the next body's shapes
         let currentShapeIndex = 0;
 
         for (const bodyId of bodyIds) {
+            // 1. Initialize max squared distance for THIS body
+            let bodyMaxDistSq = 0;
+
             const shapePtrs = b2Body_GetShapes(bodyId, b2Body_GetShapeCount(bodyId));
             const shapeCountForThisBody = shapePtrs.length;
 
             for (const shapePtr of shapePtrs) {
                 const shapeType = b2Shape_GetType(shapePtr);
 
-                // cicle
                 if (shapeType.value === b2ShapeType.b2_circleShape.value) {
                     const circle = b2Shape_GetCircle(shapePtr);
                     const localPos = circle.position;
+                    
+                    // 2. For circles, calculate its total reach from the body's center
+                    const reach = Math.hypot(localPos.x, localPos.y) + circle.radius;
+                    bodyMaxDistSq = Math.max(bodyMaxDistSq, reach * reach);
 
                     shapes.push({
                         position: [localPos.x * simConversion, localPos.y * simConversion],
                         radius: circle.radius * simConversion,
                         shapeType: shapeType.value,
-                        vertices: new Float32Array(16), // 8 vec2f, zero-filled
-                        vertexCount: 0,
+                        polyCount: 0,
+                        polyVerts: new Float32Array(16),
+                        polyNormals: new Float32Array(16),
+                        polyPlane: new Float32Array(8),
+                        boundRadius: 0,
                     });
-                }
-                // polygon
-                else if (shapeType.value === b2ShapeType.b2_polygonShape.value) {
-                  const polygon = b2Shape_GetPolygon(shapePtr);
-                  const vertexCount = polygon.count;
-                  
-                  const gpuVerts = new Float32Array(16);
-                  const gpuNormals = new Float32Array(16);
-                  const gpuPlanes = new Float32Array(8);
-                  
-                  for (let i = 0; i < vertexCount; i++) {
-                      const vertex = polygon.GetVertex(i);
-                      gpuVerts[i * 2] = vertex.x * simConversion;
-                      gpuVerts[i * 2 + 1] = vertex.y * simConversion;
 
-                      vertex.delete();
-                  }
+                } else if (shapeType.value === b2ShapeType.b2_polygonShape.value) {
+                    const polygon = b2Shape_GetPolygon(shapePtr);
+                    const vertexCount = polygon.count;
 
-                  polygon.delete();
+                    const gpuVerts = new Float32Array(16);
+                    const gpuNormals = new Float32Array(16);
+                    const gpuPlanes = new Float32Array(8);
 
-                  // Calculate edge normals and plane constants for the SAT-based collision checks on the GPU.
-                  for (let i = 0; i < vertexCount; i++) {
-                      const p1_x = gpuVerts[i * 2];
-                      const p1_y = gpuVerts[i * 2 + 1];
+                    for (let i = 0; i < vertexCount; i++) {
+                        const vertex = polygon.GetVertex(i);
+                        gpuVerts[i * 2] = vertex.x * simConversion;
+                        gpuVerts[i * 2 + 1] = vertex.y * simConversion;
+                        vertex.delete();
+                    }
+                    polygon.delete();
 
-                      const next_i = (i + 1) % vertexCount;
-                      const p2_x = gpuVerts[next_i * 2];
-                      const p2_y = gpuVerts[next_i * 2 + 1];
+                    // Calculate edge normals and plane constants...
+                    for (let i = 0; i < vertexCount; i++) {
+                        const p1_x = gpuVerts[i * 2], p1_y = gpuVerts[i * 2 + 1];
+                        const next_i = (i + 1) % vertexCount;
+                        const p2_x = gpuVerts[next_i * 2], p2_y = gpuVerts[next_i * 2 + 1];
+                        const edge_x = p2_x - p1_x, edge_y = p2_y - p1_y;
+                        let normal_x = edge_y, normal_y = -edge_x;
+                        const len = Math.hypot(normal_x, normal_y);
+                        if (len > 0) {
+                            normal_x /= len;
+                            normal_y /= len;
+                        }
+                        gpuNormals[i * 2] = normal_x;
+                        gpuNormals[i * 2 + 1] = normal_y;
+                        gpuPlanes[i] = p1_x * normal_x + p1_y * normal_y;
+                    }
+                    
+                    let shapeMaxDistSq = 0;
+                    for (let i = 0; i < vertexCount; i++) {
+                        const vx = gpuVerts[i * 2];
+                        const vy = gpuVerts[i * 2 + 1];
+                        const distSq = vx * vx + vy * vy;
+                        if (distSq > shapeMaxDistSq) {
+                            shapeMaxDistSq = distSq;
+                        }
+                    }
+                    const boundRadius = Math.sqrt(shapeMaxDistSq);
 
-                      const edge_x = p2_x - p1_x;
-                      const edge_y = p2_y - p1_y;
+                    // 2. For polygons, its furthest vertex is its reach
+                    bodyMaxDistSq = Math.max(bodyMaxDistSq, shapeMaxDistSq);
 
-                      let normal_x = edge_y;
-                      let normal_y = -edge_x;
-
-                      const len = Math.sqrt(normal_x * normal_x + normal_y * normal_y);
-                      if (len > 0) {
-                          normal_x /= len;
-                          normal_y /= len;
-                      }
-
-                      gpuNormals[i * 2] = normal_x;
-                      gpuNormals[i * 2 + 1] = normal_y;
-
-                      gpuPlanes[i] = p1_x * normal_x + p1_y * normal_y;
-                  }
-
-                  
-                  let maxDistSq = 0;
-                  for (let i = 0; i < vertexCount; i++) {
-                      const vx = gpuVerts[i * 2];
-                      const vy = gpuVerts[i * 2 + 1];
-                      const distSq = vx * vx + vy * vy;
-                      if (distSq > maxDistSq) {
-                          maxDistSq = distSq;
-                      }
-                  }
-                  const boundRadius = Math.sqrt(maxDistSq);
-
-                  shapes.push({
-                      position: [0, 0],
-                      shapeType: shapeType.value,
-
-                      boundRadius: boundRadius,
-                      polyCount: vertexCount,
-                      polyVerts: gpuVerts,
-                      polyNormals: gpuNormals,
-                      polyPlane: gpuPlanes,
-
-                      radius: 0,
-                  });
+                    shapes.push({
+                        position: [0, 0], // Polygons are centered on the body
+                        shapeType: shapeType.value,
+                        boundRadius: boundRadius,
+                        polyCount: vertexCount,
+                        polyVerts: gpuVerts,
+                        polyNormals: gpuNormals,
+                        polyPlane: gpuPlanes,
+                        radius: 0,
+                    });
                 }
             }
 
             const pos = b2Body_GetPosition(bodyId);
             const vel = b2Body_GetLinearVelocity(bodyId);
-            const angular = b2Body_GetAngularVelocity(bodyId);
             const mass = b2Body_GetMass(bodyId);
             const rot = b2Body_GetRotation(bodyId);
             const angle = b2Rot_GetAngle(rot);
@@ -416,26 +410,21 @@
                 position: [pos.x * simConversion, inputs.gridSize[1] + (pos.y * simConversion)],
                 angle: angle,
                 velocity: [vel.x * pixelToMeters, -vel.y * pixelToMeters],
-                angularVelocity: angular,
-                // link to the 'shapes' array
+                angularVelocity: b2Body_GetAngularVelocity(bodyId),
                 shapeStartIndex: currentShapeIndex,
                 shapeCount: shapeCountForThisBody,
+                boundRadiusSq: bodyMaxDistSq,
             });
 
             rot.delete();
             pos.delete();
             vel.delete();
 
-            // Update the running index for the next body
             currentShapeIndex += shapeCountForThisBody;
         }
 
-
-        return {
-            bodies,
-            shapes
-        };
-      };
+        return { bodies, shapes };
+    };
 
       window.applyImpulses = function(inputs, impulsesToApply) {
           for (const impulseData of impulsesToApply) {
