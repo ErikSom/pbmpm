@@ -285,7 +285,7 @@
           profile.delete();
       };
 
-      window.getRigidBodyData = (inputs) => {
+            window.getRigidBodyData = (inputs) => {
         const {
             b2Body_GetPosition,
             b2Body_GetLinearVelocity,
@@ -344,7 +344,11 @@
                       const vertex = polygon.GetVertex(i);
                       gpuVerts[i * 2] = vertex.x * simConversion;
                       gpuVerts[i * 2 + 1] = vertex.y * simConversion;
+
+                      vertex.delete();
                   }
+
+                  polygon.delete();
 
                   // Calculate edge normals and plane constants for the SAT-based collision checks on the GPU.
                   for (let i = 0; i < vertexCount; i++) {
@@ -404,11 +408,13 @@
             const vel = b2Body_GetLinearVelocity(bodyId);
             const angular = b2Body_GetAngularVelocity(bodyId);
             const mass = b2Body_GetMass(bodyId);
+            const rot = b2Body_GetRotation(bodyId);
+            const angle = b2Rot_GetAngle(rot);
 
             bodies.push({
                 mass: mass,
                 position: [pos.x * simConversion, inputs.gridSize[1] + (pos.y * simConversion)],
-                angle: b2Rot_GetAngle(b2Body_GetRotation(bodyId)),
+                angle: angle,
                 velocity: [vel.x * pixelToMeters, -vel.y * pixelToMeters],
                 angularVelocity: angular,
                 // link to the 'shapes' array
@@ -416,9 +422,14 @@
                 shapeCount: shapeCountForThisBody,
             });
 
+            rot.delete();
+            pos.delete();
+            vel.delete();
+
             // Update the running index for the next body
             currentShapeIndex += shapeCountForThisBody;
         }
+
 
         return {
             bodies,
