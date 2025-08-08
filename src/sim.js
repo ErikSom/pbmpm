@@ -206,6 +206,74 @@ function bukkitizeParticles(gpuContext, simUniformBuffer, bukkitSystem)
     gpu.computeDispatch(Shaders.bukkitInsert, [simUniformBuffer, gpuContext.particleCountBuffer, bukkitSystem.countBuffer2, gpuContext.particleBuffer, bukkitSystem.particleData, bukkitSystem.indexStart], gpuContext.particleSimDispatchBuffer);
 }
 
+function constructBodyBukkitMap(bodyData, gridSize, bukkitSize) {
+    if (!bodyData || bodyData.bodies.length === 0) {
+        return {
+            mapData: new Int32Array(1),
+            countAndOffsetData: new Int32Array(2)
+        };
+    }
+
+    const bukkitCountX = Math.ceil(gridSize[0] / bukkitSize);
+    const bukkitCountY = Math.ceil(gridSize[1] / bukkitSize);
+    const totalBukkits = bukkitCountX * bukkitCountY;
+
+    const bukkitMap = Array.from({ length: totalBukkits }, () => []);
+
+    for (let i = 0; i < bodyData.bodies.length; i++) {
+        const body = bodyData.bodies[i];
+        
+        // --- THIS IS THE FIX ---
+        // The body.position is an array [x, y] in raw physics space.
+        // We MUST convert it to grid space before using it.
+        const gridSpacePos = {
+            x: body.position[0],
+            y: body.position[1] // Y-flip to match grid coordinates
+        };
+        // --- END OF FIX ---
+
+        const radius = Math.sqrt(Math.max(body.boundRadiusSq, 0.0));
+        
+        // Calculate AABB in grid space using the corrected position
+        const min = { x: Math.floor(gridSpacePos.x - radius), y: Math.floor(gridSpacePos.y - radius) };
+        const max = { x: Math.ceil(gridSpacePos.x + radius), y: Math.ceil(gridSpacePos.y + radius) };
+
+        const bukkitMin = { x: Math.floor(min.x / bukkitSize), y: Math.floor(min.y / bukkitSize) };
+        const bukkitMax = { x: Math.floor(max.x / bukkitSize), y: Math.floor(max.y / bukkitSize) };
+
+        for (let by = bukkitMin.y; by <= bukkitMax.y; by++) {
+            for (let bx = bukkitMin.x; bx <= bukkitMax.x; bx++) {
+                if (bx >= 0 && bx < bukkitCountX && by >= 0 && by < bukkitCountY) {
+                    const bukkitIndex = by * bukkitCountX + bx;
+                    bukkitMap[bukkitIndex].push(i);
+                }
+            }
+        }
+    }
+
+    const flatBodyIndices = [];
+    const bukkitCountAndOffset = new Int32Array(totalBukkits * 2);
+
+    let currentOffset = 0;
+    for (let i = 0; i < totalBukkits; i++) {
+        const bodiesInBukkit = bukkitMap[i];
+        const count = bodiesInBukkit.length;
+
+        bukkitCountAndOffset[i * 2 + 0] = count;
+        bukkitCountAndOffset[i * 2 + 1] = currentOffset;
+
+        for (const bodyIndex of bodiesInBukkit) {
+            flatBodyIndices.push(bodyIndex);
+        }
+        currentOffset += count;
+    }
+
+    return {
+        mapData: new Int32Array(flatBodyIndices.length > 0 ? flatBodyIndices : [0]),
+        countAndOffsetData: bukkitCountAndOffset
+    };
+}
+
 export function update(gpuContext, inputs)
 {
     if(inputs.doReset)
@@ -215,6 +283,23 @@ export function update(gpuContext, inputs)
 
 
     const bodyData = window.getRigidBodyData ? window.getRigidBodyData(inputs) : {bodies: [], shapes: []};
+
+
+    const bodyBukkitMap = constructBodyBukkitMap(bodyData, inputs.gridSize, DispatchSizes.BukkitSize);
+
+    const bodyBukkitMapBuffer = gpuContext.device.createBuffer({
+        label: "Body-Bukkit Map Buffer",
+        size: Math.max(4, bodyBukkitMap.mapData.byteLength),
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    gpuContext.device.queue.writeBuffer(bodyBukkitMapBuffer, 0, bodyBukkitMap.mapData);
+
+    const bukkitBodyCountAndOffsetBuffer = gpuContext.device.createBuffer({
+        label: "Bukkit Body Count/Offset Buffer",
+        size: Math.max(8, bodyBukkitMap.countAndOffsetData.byteLength),
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    gpuContext.device.queue.writeBuffer(bukkitBodyCountAndOffsetBuffer, 0, bodyBukkitMap.countAndOffsetData);
 
     gpuContext.lastFrameInputs = inputs;
     gpuContext.lastFrameRigidBodyData = bodyData
@@ -269,7 +354,9 @@ export function update(gpuContext, inputs)
                 gpu.computeDispatch(Shaders.rigidbody2g, [
                     simUniformBuffer,
                     gpuContext.rigidBodiesBuffer,
-                    nextGrid
+                    nextGrid,
+                    bukkitBodyCountAndOffsetBuffer,
+                    bodyBukkitMapBuffer
                 ], gridThreadGroupCounts);
             }
 
