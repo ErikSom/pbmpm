@@ -16,10 +16,8 @@ export const Uniform = 'uniform';
 // This class allows us to conveniently code-generate structs to be used as uniform buffers
 // and copy data to the gpu, including respecting packing rules, in order to avoid
 // having to do a lot of boilerplate for every parameter we want to pass.
-export class BufferFactory
-{
-    constructor(name, mode) 
-    {
+export class BufferFactory {
+    constructor(name, mode) {
         this.name = name;
         this.mode = mode;
         this.elements = []
@@ -32,8 +30,7 @@ export class BufferFactory
     // Add a parameter with the given name and type.
     // The name is used as a key for binding data on the js side and
     // also in the generated wgsl code.
-    add(name, type, count = 1)
-    {
+    add(name, type, count = 1) {
         console.assert(!this.compiled);
 
         const isArray = count > 1;
@@ -45,14 +42,13 @@ export class BufferFactory
         const elementSize = getSize(type);
         const elementStride = Math.ceil(elementSize / requiredAlignment) * requiredAlignment;
 
-        const requiredSlotCount = elementStride * count;   
-        
-        let alignmentAdjustment = this.totalCount % requiredAlignment;        
-        while(alignmentAdjustment !== 0)
-        {
+        const requiredSlotCount = elementStride * count;
+
+        let alignmentAdjustment = this.totalCount % requiredAlignment;
+        while (alignmentAdjustment !== 0) {
             // Add a padding element to align up the member to the correct address
             this.add(`padding${this.paddingCount}`, f32);
-            this.paddingCount += 1; 
+            this.paddingCount += 1;
             alignmentAdjustment -= 1;
         }
 
@@ -71,8 +67,7 @@ export class BufferFactory
     }
 
     // Finalize the factory after parameters have been added
-    compile()
-    {
+    compile() {
         console.assert(!this.compiled);
 
         // Add final padding so the struct's total size is a multiple of its largest member's alignment.
@@ -82,25 +77,22 @@ export class BufferFactory
             const padName = `padding${this.paddingCount++}`;
             this.elements.push({ name: padName, type: f32, offset: this.totalCount++, isArray: false });
         }
-       
-        if(this.mode == Uniform)
-        {
+
+        if (this.mode == Uniform) {
             // Round up uniform buffer size to a multiple of 16 bytes (4 words)
             const alignment = 4;
-            this.totalCount = Math.ceil(this.totalCount/alignment)*alignment;
+            this.totalCount = Math.ceil(this.totalCount / alignment) * alignment;
         }
-       
+
         this.compiled = true;
     }
 
     // Assemble text that can be pasted into the const buffer definition
-    getShaderText()
-    {
+    getShaderText() {
         console.assert(this.compiled);
 
         let shaderText = `struct ${this.name}\n{\n`
-        for(const elem of this.elements)
-        {
+        for (const elem of this.elements) {
             // Don't generate shader code for padding helpers
             if (elem.name.startsWith('padding')) continue;
 
@@ -115,39 +107,31 @@ export class BufferFactory
         return shaderText;
     }
 
-    getTotalSizeInWords()
-    {
+    getTotalSizeInWords() {
         console.assert(this.compiled);
         return this.totalCount;
     }
-    
+
     // Build a uniform buffer object containing the currently stored values
-    constructUniformBuffer(device, values)
-    {
+    constructUniformBuffer(device, values) {
         console.assert(this.compiled);
         console.assert(this.mode == Uniform);
         console.assert(Array.isArray(values));
 
-        for(const elem of this.elements)
-        {
+        for (const elem of this.elements) {
             elem.value = undefined;
         }
 
-        for(const valueObject of values)
-        {
-            for(const elem of this.elements)
-            {
-                if(elem.name in valueObject)
-                {
+        for (const valueObject of values) {
+            for (const elem of this.elements) {
+                if (elem.name in valueObject) {
                     elem.value = valueObject[elem.name];
                 }
             }
         }
 
-        for(const elem of this.elements)
-        {
-            if(elem.value === undefined && elem.name.indexOf('padding') == -1)
-            {
+        for (const elem of this.elements) {
+            if (elem.value === undefined && elem.name.indexOf('padding') == -1) {
                 throw `Element ${elem.name} has never had its value set.`;
             }
         }
@@ -160,10 +144,8 @@ export class BufferFactory
 
         const uniformValues = new Float32Array(this.totalCount);
 
-        for(const elem of this.elements)
-        {
-            if(elem.value === undefined)
-            {
+        for (const elem of this.elements) {
+            if (elem.value === undefined) {
                 continue;
             }
 
@@ -194,27 +176,23 @@ export class BufferFactory
             } else {
                 // If we need to write an integer type then we have to trick
                 // the data into the uniform values array using this mechanism.
-                if(elem.type == u32)
-                {
+                if (elem.type == u32) {
                     const castArray = new Int32Array(1);
                     castArray.set([elem.value], 0);
                     const castArrayFloat = new Float32Array(castArray.buffer);
-                    uniformValues.set(castArrayFloat, elem.offset); 
+                    uniformValues.set(castArrayFloat, elem.offset);
                 }
-                else if(elem.type == vec2u)
-                {
+                else if (elem.type == vec2u) {
                     const castArray = new Int32Array(2);
                     castArray.set(elem.value, 0);
                     const castArrayFloat = new Float32Array(castArray.buffer);
                     uniformValues.set(castArrayFloat, elem.offset);
                 }
-                else if(elem.type == f32)
-                {
+                else if (elem.type == f32) {
                     // Float values can be written through an array
                     uniformValues.set([elem.value], elem.offset);
                 }
-                else
-                {
+                else {
                     // Float vector values can be written directly
                     uniformValues.set(elem.value, elem.offset);
                 }
@@ -224,10 +202,9 @@ export class BufferFactory
         device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
 
         return uniformBuffer;
-    }    
+    }
 
-    constructStorageBuffer(device, elements)
-    {
+    constructStorageBuffer(device, elements) {
         console.assert(this.compiled);
         console.assert(this.mode == Storage);
         console.assert(Array.isArray(elements));
@@ -241,40 +218,32 @@ export class BufferFactory
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
         });
 
-        const storageValues = new Float32Array(this.totalCount*elementCount);
+        const storageValues = new Float32Array(this.totalCount * elementCount);
 
-        for(var i = 0; i < elementCount; ++i)
-        {
-            const outputOffset = i*this.totalCount;
+        for (var i = 0; i < elementCount; ++i) {
+            const outputOffset = i * this.totalCount;
             const currentElementData = elements[i];
 
-            for(const elem of this.elements)
-            {
+            for (const elem of this.elements) {
                 elem.value = undefined;
             }
 
-            for(const elem of this.elements)
-            {
-                if(elem.name in elements[i])
-                {
+            for (const elem of this.elements) {
+                if (elem.name in elements[i]) {
                     elem.value = elements[i][elem.name];
                 }
             }
 
-            for(const elem of this.elements)
-            {
-                if(elem.value === undefined && elem.name.indexOf('padding') == -1)
-                {
+            for (const elem of this.elements) {
+                if (elem.value === undefined && elem.name.indexOf('padding') == -1) {
                     throw `Element ${elem.name} has never had its value set.`;
                 }
             }
-        
-            for(const elem of this.elements)
-            {
+
+            for (const elem of this.elements) {
                 const value = currentElementData[elem.name];
 
-                if(value === undefined)
-                {
+                if (value === undefined) {
                     if (elem.name.indexOf('padding') == -1) {
                         throw `Element ${elem.name} has no value set for index ${i}.`;
                     }
@@ -330,26 +299,22 @@ export class BufferFactory
 
         return storageBuffer;
     }
-    
-    constructCPUArray(elements)
-    {
+
+    constructCPUArray(elements) {
         console.assert(this.compiled);
         console.assert(Array.isArray(elements));
 
         const elementCount = elements.length;
         const cpuValues = new Float32Array(this.totalCount * elementCount);
 
-        for(var i = 0; i < elementCount; ++i)
-        {
+        for (var i = 0; i < elementCount; ++i) {
             const outputOffset = i * this.totalCount;
             const currentElementData = elements[i];
 
-            for(const elem of this.elements)
-            {
+            for (const elem of this.elements) {
                 const value = currentElementData[elem.name];
 
-                if(value === undefined)
-                {
+                if (value === undefined) {
                     continue;
                 }
 
@@ -375,30 +340,26 @@ export class BufferFactory
                             cpuValues.set(singleElementValue, destOffset);
                         }
                     }
-                } 
+                }
                 // Handle scalar/vector types
                 else {
                     const destOffset = outputOffset + elem.offset;
-                    if(elem.type == u32)
-                    {
+                    if (elem.type == u32) {
                         const castArray = new Int32Array(1);
                         castArray.set([value], 0);
                         const castArrayFloat = new Float32Array(castArray.buffer);
-                        cpuValues.set(castArrayFloat, destOffset); 
+                        cpuValues.set(castArrayFloat, destOffset);
                     }
-                    else if(elem.type == vec2u)
-                    {
+                    else if (elem.type == vec2u) {
                         const castArray = new Int32Array(2);
                         castArray.set(value, 0);
                         const castArrayFloat = new Float32Array(castArray.buffer);
                         cpuValues.set(castArrayFloat, destOffset);
                     }
-                    else if(elem.type == f32)
-                    {
+                    else if (elem.type == f32) {
                         cpuValues.set([value], destOffset);
                     }
-                    else
-                    {
+                    else {
                         cpuValues.set(value, destOffset);
                     }
                 }
@@ -406,15 +367,89 @@ export class BufferFactory
         }
         return cpuValues;
     }
+
+    getUniformData(values) {
+        console.assert(this.compiled);
+        console.assert(this.mode == Uniform);
+        console.assert(Array.isArray(values));
+
+        for (const elem of this.elements) {
+            elem.value = undefined;
+        }
+
+        for (const valueObject of values) {
+            for (const elem of this.elements) {
+                if (elem.name in valueObject) {
+                    elem.value = valueObject[elem.name];
+                }
+            }
+        }
+
+        for (const elem of this.elements) {
+            if (elem.value === undefined && elem.name.indexOf('padding') == -1) {
+                throw `Element ${elem.name} has never had its value set.`;
+            }
+        }
+
+        const uniformValues = new Float32Array(this.totalCount);
+
+        for (const elem of this.elements) {
+            if (elem.value === undefined) {
+                continue;
+            }
+
+            if (elem.isArray) {
+                const elementSize = getSize(elem.type); // Size of the base type (e.g., vec3f -> 3)
+                for (let i = 0; i < elem.count; ++i) {
+                    const destOffset = elem.offset + i * elem.elementStride;
+                    const sourceOffset = i * elementSize;
+                    const singleElementValue = elem.value.slice(sourceOffset, sourceOffset + elementSize);
+
+                    if (elem.type == u32) {
+                        const castArray = new Int32Array(1);
+                        castArray.set(singleElementValue, 0);
+                        const castArrayFloat = new Float32Array(castArray.buffer);
+                        uniformValues.set(castArrayFloat, destOffset);
+                    } else if (elem.type == vec2u) {
+                        const castArray = new Int32Array(2);
+                        castArray.set(singleElementValue, 0);
+                        const castArrayFloat = new Float32Array(castArray.buffer);
+                        uniformValues.set(castArrayFloat, destOffset);
+                    } else {
+                        uniformValues.set(singleElementValue, destOffset);
+                    }
+                }
+            } else {
+                if (elem.type == u32) {
+                    const castArray = new Int32Array(1);
+                    castArray.set([elem.value], 0);
+                    const castArrayFloat = new Float32Array(castArray.buffer);
+                    uniformValues.set(castArrayFloat, elem.offset);
+                }
+                else if (elem.type == vec2u) {
+                    const castArray = new Int32Array(2);
+                    castArray.set(elem.value, 0);
+                    const castArrayFloat = new Float32Array(castArray.buffer);
+                    uniformValues.set(castArrayFloat, elem.offset);
+                }
+                else if (elem.type == f32) {
+                    uniformValues.set([elem.value], elem.offset);
+                }
+                else {
+                    uniformValues.set(elem.value, elem.offset);
+                }
+            }
+        }
+
+        return uniformValues;
+    }
 }
 
 // What should the size of each type be in multiples of the size of
 // an f32
-function getSize(type)
-{
-    switch(type)
-    {
-        case f32: 
+function getSize(type) {
+    switch (type) {
+        case f32:
         case u32:
             return 1;
         case vec2f:
@@ -429,10 +464,8 @@ function getSize(type)
 
 // What should the alignment of each type be in multiples of
 // the size of an f32
-function getAlignment(type)
-{
-    switch(type)
-    {
+function getAlignment(type) {
+    switch (type) {
         case f32:
         case u32:
             return 1;
@@ -442,6 +475,6 @@ function getAlignment(type)
         case vec3f:
             return 4;
         default:
-        throw `Unsupported type [${type}]`;
+            throw `Unsupported type [${type}]`;
     }
 }

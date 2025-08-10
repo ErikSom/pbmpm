@@ -9,9 +9,9 @@ import * as buffer_factory from "./buffer_factory.js"
 import { RenderEnums } from "./sim.js";
 
 let g_renderFactory;
+let g_renderUniformBuffer = null;
 
-export function init(insertHandlers)
-{
+export function init(insertHandlers) {
     // Specify the contents of the render uniform buffer.
     const renderFactory = new buffer_factory.BufferFactory('RenderConstants', buffer_factory.Uniform);
     renderFactory.add('particleRadiusTimestamp', buffer_factory.vec2f);
@@ -29,40 +29,35 @@ export function init(insertHandlers)
     g_renderFactory = renderFactory;
 }
 
-function constructRenderUniformBuffer(gpuContext, inputs)
-{
-    let viewPos = [inputs.gridSize[0] / 2 , inputs.gridSize[1]/2];
-
-    // This causes some trouble with shape coordinates so not doing it for now
-    // Shrink the view to remove the empty border consisting of guardian cells
-    // let viewExtent = [
-    //     viewPos[0] - SimEnums.GuardianSize,
-    //     viewPos[1] - SimEnums.GuardianSize,
-    // ]
-
+export function update(gpuContext, inputs) {
+    let viewPos = [inputs.gridSize[0] / 2, inputs.gridSize[1] / 2];
     let viewExtent = viewPos;
 
-    // Update values that must be set directly
     const setDirectlyValues = {
         particleRadiusTimestamp: [0.5, 0],
         canvasSize: inputs.resolution,
         viewPos: viewPos,
         viewExtent: viewExtent,
-        deltaTime: 1.0/inputs.simRate,
+        deltaTime: 1.0 / inputs.simRate,
     };
 
-    return g_renderFactory.constructUniformBuffer(gpuContext.device, [inputs, setDirectlyValues]);
-}
+    const uniformData = g_renderFactory.getUniformData([inputs, setDirectlyValues]);
 
-export function update(gpuContext, inputs)
-{
-    let renderUniformBuffer = constructRenderUniformBuffer(gpuContext, inputs);
+    if (!g_renderUniformBuffer) {
+        g_renderUniformBuffer = gpuContext.device.createBuffer({
+            label: 'RenderConstants',
+            size: uniformData.byteLength,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+    }
+
+    gpuContext.device.queue.writeBuffer(g_renderUniformBuffer, 0, uniformData);
 
     const renderingBindGroup = gpu.createBindGroup(
         "Rendering Bind Group",
         'particleRender',
         [
-            renderUniformBuffer,
+            g_renderUniformBuffer,
             gpuContext.particleBuffer,
             gpuContext.rigidBodiesBuffer,
         ]
@@ -71,7 +66,7 @@ export function update(gpuContext, inputs)
     const renderPass = gpuContext.encoder.beginRenderPass({
         colorAttachments: [{
             view: gpuContext.context.getCurrentTexture().createView(),
-            clearValue: [0,0,0,0],
+            clearValue: [0, 0, 0, 0],
             loadOp: "clear",
             storeOp: "store",
         }]
