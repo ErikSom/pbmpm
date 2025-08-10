@@ -30,29 +30,21 @@ fn csMain(@builtin(global_invocation_id) id: vec3<u32>) {
     let gridPos = vec2f(id.xy);
     let gridIdx = gridVertexIndex(id.xy, g_simConstants.gridSize);
 
-    // --- THE FIX ---
-    // Convert the grid cell's query position into the physics engine's coordinate system (Y-flip).
-    // All subsequent distance and collision checks will happen in this consistent "physics space".
     var physicsQueryPos = gridPos;
-    // physicsQueryPos.y = f32(g_simConstants.gridSize.y) - gridPos.y;
 
     var closestBodyIndex: i32 = -1;
     var closestPenetration: f32 = 0.0;
     var closestNormal = vec2f(0.0);
 
-    // 1. Find which bukkit this grid cell belongs to.
     let bukkitCoords = vec2u(gridPos / f32(BukkitSize));
     let bukkitIndex = bukkitCoords.y * g_simConstants.bukkitCountX + bukkitCoords.x;
 
-    // 2. Look up the list of nearby bodies.
     let bukkitInfo = g_bukkitBodyCountsAndOffsets[bukkitIndex];
 
-    // 3. Loop over ONLY the nearby bodies.
     for (var i = 0u; i < bukkitInfo.count; i = i + 1u) {
         let bodyIndex = g_bodyBukkitMap[bukkitInfo.offset + i];
         let body = g_rigidBodies.bodies[bodyIndex];
 
-        // Compare physics-space body position with our transformed physics-space query position.
         let offset = body.position - physicsQueryPos;
         if (dot(offset, offset) > body.boundRadiusSq) {
             continue;
