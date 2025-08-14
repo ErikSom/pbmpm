@@ -8,6 +8,7 @@ export let Shaders = {
 
     // MPM  shaders
     g2p2g: 'g2p2g',
+    rigidbody2g: 'rigidbody2g',
 
     // Bukkitizing shaders
     bukkitCount: 'bukkitCount',

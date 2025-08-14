@@ -353,67 +353,90 @@ fn csMain( @builtin(local_invocation_index) indexInGroup: u32, @builtin(workgrou
                     }
                 }
 
-// Handle Rigid Body Interaction (Action-Reaction Model)
-for (var bodyIndex = 0u; bodyIndex < g_rigidBodies.body_count; bodyIndex = bodyIndex + 1u)
-{
-    let body = g_rigidBodies.bodies[bodyIndex];
+            
+            // --- OPTIMIZED RIGID BODY INTERACTION ---
+                // 1. Collect candidate bodies from the grid neighborhood.
+                var candidateBodyIndices: array<i32, 9>;
+                var candidateCount = 0u;
+                
+                // Using the same weightInfo from the G2P step.
+                for (var i_n = 0u; i_n < 3u; i_n++) {
+                    for (var j_n = 0u; j_n < 3u; j_n++) {
+                        let neighborCellIndex = vec2u(weightInfo.cellIndex) + vec2u(i_n, j_n);
 
-    // Loop through all shapes attached to this body
-    for (var i = 0.0; i < body.shapeCount; i = i + 1.0)
-    {
-        let shapeIndex = u32(body.shapeStartIndex + i);
-        let localShape = g_rigidBodies.shapes[shapeIndex];
+                        if (all(neighborCellIndex < g_simConstants.gridSize)) {
+                            let gridIdx = gridVertexIndex(neighborCellIndex, g_simConstants.gridSize);
+                            
+                            // The rigidbody data was written to g_gridDst by rigidbody2g pass.
+                            let bodyIndex = atomicLoad(&g_gridDst[gridIdx + 4]);
 
-        let collideResult = RBcollide(localShape, body.position, body.angle, particle.position);
+                            if (bodyIndex != -1) {
+                                // Check for duplicates before adding to our candidate list.
+                                var found = false;
+                                for (var k = 0u; k < candidateCount; k++) {
+                                    if (candidateBodyIndices[k] == bodyIndex) {
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if (!found && candidateCount < 9u) {
+                                    candidateBodyIndices[candidateCount] = bodyIndex;
+                                    candidateCount++;
+                                }
+                            }
+                        }
+                    }
+                }
 
-        // Check for actual penetration to calculate forces
-if (collideResult.collides && collideResult.penetration > 0.0)
-{
-    let r = collideResult.pointOnCollider - body.position;
-    
-    // --- Part 1: Sticking logic ---
-    let bodyVelAtContact = body.velocity + vec2f(-r.y, r.x) * body.angularVelocity;
-    let bodyDispAtContact = bodyVelAtContact * g_simConstants.deltaTime;
-    let stickiness = 0.1;
-    particle.displacement = mix(particle.displacement, bodyDispAtContact, stickiness);
-    
-    // --- Part 2: Force calculation with proper scaling ---
-    let clampedPenetration = min(collideResult.penetration, 0.5);
-    
-    // At higher resolution, we have more particles per unit area
-    // Each particle should contribute less force to maintain consistency
-    let ref_divisor = 8.0;
-    let area_scale = pow(g_simConstants.simResDivisor / ref_divisor, 2.0);
-    
-    // Base impulse calculation
-    let base_impulse = particle.mass * clampedPenetration * collideResult.normal / g_simConstants.deltaTime;
-    let base_angular_impulse = r.x * base_impulse.y - r.y * base_impulse.x;
-    
-    // Scale the impulses that go to the rigid body
-    let impulseOnBody = area_scale * base_impulse;
-    let angularImpulseOnBody = area_scale * base_angular_impulse;
-    
-    // Apply to rigid body
-    let impulseMultiplier = 1000.0;
-    let i_impulse = vec2i(
-        encodeFixedPoint(impulseOnBody.x, u32(impulseMultiplier)),
-        encodeFixedPoint(impulseOnBody.y, u32(impulseMultiplier))
-    );
-    let i_angularImpulse = encodeFixedPoint(angularImpulseOnBody, u32(impulseMultiplier));
-    
-    let resultsIndex = bodyIndex * 4u;
-    atomicAdd(&g_forceResults[resultsIndex + 0u], i_impulse.x);
-    atomicAdd(&g_forceResults[resultsIndex + 1u], i_impulse.y);
-    atomicAdd(&g_forceResults[resultsIndex + 2u], i_angularImpulse);
-    
-    // Push particle out - this should NOT be scaled!
-    // The penetration resolution should be the same regardless of resolution
-    particle.displacement -= clampedPenetration * collideResult.normal;
-}
-    }
-}
+                // 2. Test collisions against the smaller list of candidate bodies.
+                for (var c_idx = 0u; c_idx < candidateCount; c_idx++) {
+                    let bodyIndex = u32(candidateBodyIndices[c_idx]);
+                    let body = g_rigidBodies.bodies[bodyIndex];
+
+                    for (var i_s = 0.0; i_s < body.shapeCount; i_s = i_s + 1.0) {
+                        let shapeIndex = u32(body.shapeStartIndex + i_s);
+                        let localShape = g_rigidBodies.shapes[shapeIndex];
+
+                        let collideResult = RBcollide(localShape, body.position, body.angle, particle.position);
+
+                        if (collideResult.collides && collideResult.penetration > 0.0) {
+                            let r = collideResult.pointOnCollider - body.position;
+  
+                            // --- Part 1: Sticking logic ---
+                            let bodyVelAtContact = body.velocity + vec2f(-r.y, r.x) * body.angularVelocity;
+                            let bodyDispAtContact = bodyVelAtContact * g_simConstants.deltaTime;
+                            let stickiness = 0.1;
+                            particle.displacement = mix(particle.displacement, bodyDispAtContact, stickiness);
+                            
+                            // --- Part 2: Force calculation with proper scaling ---
+                            let clampedPenetration = min(collideResult.penetration, 0.5);
+                            
+                            let ref_divisor = 8.0;
+                            let area_scale = pow(g_simConstants.simResDivisor / ref_divisor, 2.0);
+                            
+                            let base_impulse = particle.mass * clampedPenetration * collideResult.normal / g_simConstants.deltaTime;
+                            let base_angular_impulse = r.x * base_impulse.y - r.y * base_impulse.x;
+                            
+                            let impulseOnBody = area_scale * base_impulse;
+                            let angularImpulseOnBody = area_scale * base_angular_impulse;
+                            
+                            let impulseMultiplier = 1000.0;
+                            let i_impulse = vec2i(
+                                encodeFixedPoint(impulseOnBody.x, u32(impulseMultiplier)),
+                                encodeFixedPoint(impulseOnBody.y, u32(impulseMultiplier))
+                            );
+                            let i_angularImpulse = encodeFixedPoint(angularImpulseOnBody, u32(impulseMultiplier));
+                            
+                            let resultsIndex = bodyIndex * 4u;
+                            atomicAdd(&g_forceResults[resultsIndex + 0u], i_impulse.x);
+                            atomicAdd(&g_forceResults[resultsIndex + 1u], i_impulse.y);
+                            atomicAdd(&g_forceResults[resultsIndex + 2u], i_angularImpulse);
+                            
+                            particle.displacement -= clampedPenetration * collideResult.normal;
+                        }
+                    }
+                }
             }
-
             // Save particle
             g_particles[myParticleIndex] = particle;
         }

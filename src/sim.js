@@ -127,6 +127,7 @@ export function init(insertHandlers)
     bodyDefFactory.add('angularVelocity', buffer_factory.f32);
     bodyDefFactory.add('shapeStartIndex', buffer_factory.f32);
     bodyDefFactory.add('shapeCount', buffer_factory.f32);
+    bodyDefFactory.add('boundRadiusSq', buffer_factory.f32);
     bodyDefFactory.compile();
     //   Shape
     const rigidShapeFactory = new buffer_factory.BufferFactory('Shape', buffer_factory.Storage);
@@ -234,7 +235,7 @@ export function update(gpuContext, inputs)
     {
         gridBuffers.push(gpuContext.device.createBuffer({
             label: `gridBuffer${i}`,
-            size: inputs.gridSize[0] * inputs.gridSize[1] * 4 * 4,
+            size: inputs.gridSize[0] * inputs.gridSize[1] * 8 * 4,
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
         }));
     } 
@@ -242,6 +243,12 @@ export function update(gpuContext, inputs)
     const substepCount = time.doTimeRegulation(inputs);
 
     gpuContext.encoder.clearBuffer(gpuContext.forceResultsBuffer);
+
+    const gridThreadGroupCounts = [
+        gpu.divUp(inputs.gridSize[0], DispatchSizes.GridDispatchSize),
+        gpu.divUp(inputs.gridSize[1], DispatchSizes.GridDispatchSize),
+        1
+    ];
 
     for(let substepIdx = 0; substepIdx < substepCount; ++substepIdx)
     {
@@ -257,6 +264,14 @@ export function update(gpuContext, inputs)
             bufferIdx = (bufferIdx + 1) % 3;
 
             gpuContext.encoder.clearBuffer(nextGrid);
+
+            if (bodyData.bodies.length > 0 && iterationIdx > 0) {
+                gpu.computeDispatch(Shaders.rigidbody2g, [
+                    simUniformBuffer,
+                    gpuContext.rigidBodiesBuffer,
+                    nextGrid
+                ], gridThreadGroupCounts);
+            }
 
             gpu.computeDispatch(Shaders.g2p2g, [
                 [
